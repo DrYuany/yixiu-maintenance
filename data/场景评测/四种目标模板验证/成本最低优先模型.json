@@ -1,0 +1,353 @@
+{
+  "schema_version": "1.0",
+  "status": "ready",
+  "problem_statement": "四目标固定语义对照",
+  "data": {},
+  "variables": [
+    {
+      "id": "甲",
+      "type": "binary",
+      "lower_bound": 0,
+      "upper_bound": 1,
+      "unit": "1"
+    },
+    {
+      "id": "乙",
+      "type": "binary",
+      "lower_bound": 0,
+      "upper_bound": 1,
+      "unit": "1"
+    },
+    {
+      "id": "丙",
+      "type": "binary",
+      "lower_bound": 0,
+      "upper_bound": 1,
+      "unit": "1"
+    },
+    {
+      "id": "丁",
+      "type": "binary",
+      "lower_bound": 0,
+      "upper_bound": 1,
+      "unit": "1"
+    },
+    {
+      "id": "策略_最后完工分钟",
+      "type": "continuous",
+      "lower_bound": 0,
+      "upper_bound": 10,
+      "unit": "分钟"
+    }
+  ],
+  "objectives": [
+    {
+      "id": "总经济成本",
+      "priority": 1,
+      "sense": "minimize",
+      "expression": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "甲",
+            "coefficient": 100
+          },
+          {
+            "variable": "乙",
+            "coefficient": 40
+          },
+          {
+            "variable": "丙",
+            "coefficient": 20
+          },
+          {
+            "variable": "丁",
+            "coefficient": 30
+          }
+        ]
+      }
+    },
+    {
+      "id": "完成任务数",
+      "priority": 2,
+      "sense": "maximize",
+      "expression": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "丁",
+            "coefficient": 1
+          },
+          {
+            "variable": "丙",
+            "coefficient": 1
+          },
+          {
+            "variable": "乙",
+            "coefficient": 1
+          },
+          {
+            "variable": "甲",
+            "coefficient": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "最后完工时间",
+      "priority": 3,
+      "sense": "minimize",
+      "expression": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "策略_最后完工分钟",
+            "coefficient": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "完工时间和",
+      "priority": 4,
+      "sense": "minimize",
+      "expression": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "丁",
+            "coefficient": 4
+          },
+          {
+            "variable": "丙",
+            "coefficient": 3
+          },
+          {
+            "variable": "乙",
+            "coefficient": 2
+          },
+          {
+            "variable": "甲",
+            "coefficient": 8
+          }
+        ]
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "id": "资源上限",
+      "kind": "linear_row",
+      "meaning": "有效资源总量不超过8",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "甲",
+            "coefficient": 8
+          },
+          {
+            "variable": "乙",
+            "coefficient": 2
+          },
+          {
+            "variable": "丙",
+            "coefficient": 3
+          },
+          {
+            "variable": "丁",
+            "coefficient": 4
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 8
+    },
+    {
+      "id": "策略_完工上界_丁",
+      "kind": "linear_row",
+      "meaning": "最后完工时刻不早于任一已选完整维修候选的完工时刻，无变量乘积或任意大M",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "丁",
+            "coefficient": 4
+          },
+          {
+            "variable": "策略_最后完工分钟",
+            "coefficient": -1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 0
+    },
+    {
+      "id": "策略_任务选择_丁",
+      "kind": "linear_row",
+      "meaning": "必修任务恰选一个完整维修候选，其他任务最多选择一个，不允许部件被重复计数",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "丁",
+            "coefficient": 1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 1
+    },
+    {
+      "id": "策略_完工上界_丙",
+      "kind": "linear_row",
+      "meaning": "最后完工时刻不早于任一已选完整维修候选的完工时刻，无变量乘积或任意大M",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "丙",
+            "coefficient": 3
+          },
+          {
+            "variable": "策略_最后完工分钟",
+            "coefficient": -1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 0
+    },
+    {
+      "id": "策略_任务选择_丙",
+      "kind": "linear_row",
+      "meaning": "必修任务恰选一个完整维修候选，其他任务最多选择一个，不允许部件被重复计数",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "丙",
+            "coefficient": 1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 1
+    },
+    {
+      "id": "策略_完工上界_乙",
+      "kind": "linear_row",
+      "meaning": "最后完工时刻不早于任一已选完整维修候选的完工时刻，无变量乘积或任意大M",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "乙",
+            "coefficient": 2
+          },
+          {
+            "variable": "策略_最后完工分钟",
+            "coefficient": -1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 0
+    },
+    {
+      "id": "策略_任务选择_乙",
+      "kind": "linear_row",
+      "meaning": "必修任务恰选一个完整维修候选，其他任务最多选择一个，不允许部件被重复计数",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "乙",
+            "coefficient": 1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 1
+    },
+    {
+      "id": "策略_完工上界_甲",
+      "kind": "linear_row",
+      "meaning": "最后完工时刻不早于任一已选完整维修候选的完工时刻，无变量乘积或任意大M",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "甲",
+            "coefficient": 8
+          },
+          {
+            "variable": "策略_最后完工分钟",
+            "coefficient": -1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 0
+    },
+    {
+      "id": "策略_任务选择_甲",
+      "kind": "linear_row",
+      "meaning": "必修任务恰选一个完整维修候选，其他任务最多选择一个，不允许部件被重复计数",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "甲",
+            "coefficient": 1
+          }
+        ]
+      },
+      "sense": "<=",
+      "rhs": 1
+    },
+    {
+      "id": "策略_共同服务下限",
+      "kind": "linear_row",
+      "meaning": "所有策略共用相同最低完成任务数量",
+      "lhs": {
+        "constant": 0,
+        "terms": [
+          {
+            "variable": "丁",
+            "coefficient": 1
+          },
+          {
+            "variable": "丙",
+            "coefficient": 1
+          },
+          {
+            "variable": "乙",
+            "coefficient": 1
+          },
+          {
+            "variable": "甲",
+            "coefficient": 1
+          }
+        ]
+      },
+      "sense": ">=",
+      "rhs": 1
+    }
+  ],
+  "unresolved_data": [],
+  "assumptions": [],
+  "provenance": [
+    {
+      "目标模板编号": "成本最低优先",
+      "目标模板版本": "1.0",
+      "服务约定": {
+        "必修任务": [],
+        "最低完成数量": 1
+      },
+      "计数口径": "部件维修任务数，非风机台数",
+      "时间口径": "同一基点分钟"
+    }
+  ]
+}

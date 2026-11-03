@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 默认套件：确定性、不联网、约 1-2 分钟。
+  # 慢速真求解（-m slow，22 条，约 30 分钟）只在手动触发时跑。
+  backend:
+    name: 后端 · pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 用例收集数（写进日志，防止数字和 README 漂移）
+        run: python -m pytest --collect-only -q | tail -3
+
+      - name: 默认套件
+        run: python -m pytest -q
+
+  # 慢速套件：真的建模型、真的调 CP-SAT。只在手动触发或每晚跑。
+  backend-slow:
+    name: 后端 · 真求解端到端
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - run: python -m pytest -m slow -q
+
+  frontend:
+    name: 前端 · vitest + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: 单元测试
+        run: npm run test
+
+      - name: 构建（同时验证 TS 与单文件打包脚本）
+        run: npm run build

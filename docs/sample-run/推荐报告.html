@@ -1,0 +1,365 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><title>检修窗口推荐</title><style>body{font:16px system-ui;max-width:1100px;margin:36px auto;padding:0 24px;color:#173042}table{border-collapse:collapse;width:100%;margin:20px 0}td,th{text-align:left;padding:12px;border-bottom:1px solid #d7e1e7}th{background:#eef4f7}.card{padding:20px;background:#edf8f2;border-radius:12px;font-size:20px}.warning{color:#9a5510}details{margin:16px 0}pre{white-space:pre-wrap;font-size:13px}a{color:#006b86}</style><h1>检修窗口推荐</h1><p>规划时点 2026-10-29T19:56:00+08:00 · 合成数据</p><div class="card"><strong>预计总成本 ¥2,526,607.33</strong><p>安排 12 / 12 项 · 租船 15 艘天</p></div><table><tr><th>推荐窗口</th><th>实际检修起止</th><th>修哪些</th></tr><tr><td>窗口03</td><td>2026-11-15T08:00:00+08:00<br>2026-11-19T14:00:00+08:00</td><td>风机004 齿轮箱；风机003 主轴；风机001 叶片；风机008 变频器；风机005 发电机；风机002 轮毂；风机012 齿轮箱；风机007 变桨电机；风机006 偏航电机；风机011 主轴；风机010 轮毂；风机009 叶片</td></tr></table><h2>与人工排程比较</h2><table><tr><th>方法</th><th>完成</th><th>总成本</th><th>推荐方案节省</th></tr><tr><td>严重性优先</td><td>11</td><td>¥2,517,132.59</td><td>任务集合不同，不宣称同等服务节省</td></tr><tr><td>低风速优先</td><td>10</td><td>¥2,442,185.68</td><td>任务集合不同，不宣称同等服务节省</td></tr></table><details><summary>费用明细</summary><pre>{
+  &quot;船租&quot;: 180000.0,
+  &quot;人工&quot;: 16275.0,
+  &quot;备件&quot;: 77000,
+  &quot;其他费用&quot;: 0,
+  &quot;发电损失&quot;: 2253332.33,
+  &quot;现金支出&quot;: 273275.0
+}</pre></details><details><summary>未安排任务</summary><pre>[]</pre></details><details><summary>求解与数据审计</summary><pre>{
+  &quot;数据&quot;: {
+    &quot;数据性质&quot;: &quot;合成&quot;,
+    &quot;来源&quot;: &quot;D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json&quot;,
+    &quot;场景&quot;: &quot;基座01&quot;,
+    &quot;输入哈希&quot;: &quot;a105c4ee6f411c23420017e87c7bc99c1a1cb6a723766e0fcb6e7758b1edbbf0&quot;,
+    &quot;规划时点&quot;: &quot;2026-10-29T19:56:00+08:00&quot;,
+    &quot;时点来源&quot;: &quot;当前时刻&quot;,
+    &quot;覆盖期起&quot;: &quot;2026-10-23T00:00:00+08:00&quot;,
+    &quot;覆盖期止&quot;: &quot;2027-01-22T00:00:00+08:00&quot;,
+    &quot;参数覆盖&quot;: {},
+    &quot;编译器版本&quot;: &quot;3.1&quot;,
+    &quot;运行模式&quot;: &quot;HYPOTHETICAL&quot;,
+    &quot;规划边界&quot;: &quot;2026-11-05T19:56:00+08:00&quot;,
+    &quot;观察终点&quot;: &quot;2027-01-27T19:56:00+08:00&quot;,
+    &quot;目标窗口编号&quot;: &quot;窗口03&quot;,
+    &quot;窗口选择&quot;: {
+      &quot;状态&quot;: &quot;READY&quot;,
+      &quot;规划边界&quot;: &quot;2026-11-05T19:56:00+08:00&quot;,
+      &quot;观察终点&quot;: &quot;2027-01-27T19:56:00+08:00&quot;,
+      &quot;目标窗口编号&quot;: &quot;窗口03&quot;,
+      &quot;跳过窗口&quot;: [
+        {
+          &quot;编号&quot;: &quot;窗口01&quot;,
+          &quot;原因码&quot;: &quot;STARTS_BEFORE_PLANNING_BOUNDARY&quot;
+        },
+        {
+          &quot;编号&quot;: &quot;窗口02&quot;,
+          &quot;原因码&quot;: &quot;STARTS_BEFORE_PLANNING_BOUNDARY&quot;
+        }
+      ]
+    },
+    &quot;告警水位线&quot;: &quot;2026-10-26T18:00:00+08:00&quot;,
+    &quot;运行哈希&quot;: &quot;2da9dbeefc3c3be3e460e527c2c222165150c5a296424f94a80bf0f6c16c1e3c&quot;
+  },
+  &quot;求解&quot;: {
+    &quot;求解器&quot;: &quot;OR-Tools CP-SAT&quot;,
+    &quot;模型形式&quot;: &quot;有界整数线性目标及可线性化调度约束&quot;,
+    &quot;求解器参数&quot;: {
+      &quot;num_search_workers&quot;: 1,
+      &quot;random_seed&quot;: 17,
+      &quot;max_time_in_seconds&quot;: 300
+    },
+    &quot;有解&quot;: true,
+    &quot;解状态&quot;: &quot;OPTIMAL&quot;,
+    &quot;终止原因&quot;: &quot;COMPLETED&quot;,
+    &quot;方案来源&quot;: &quot;CP_SAT&quot;,
+    &quot;分层全部最优&quot;: true,
+    &quot;确定性决胜完成&quot;: true,
+    &quot;阶段&quot;: [
+      {
+        &quot;目标&quot;: &quot;高严重完工时间和&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 1.2540544,
+        &quot;模型文件&quot;: &quot;solver_model_stage_1.pbtxt&quot;,
+        &quot;目标值&quot;: 143400.0,
+        &quot;界&quot;: 143400.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;中严重完工时间和&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 181.1620019,
+        &quot;模型文件&quot;: &quot;solver_model_stage_2.pbtxt&quot;,
+        &quot;目标值&quot;: 188640.0,
+        &quot;界&quot;: 188640.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;低严重完工时间和&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 8.569086500000001,
+        &quot;模型文件&quot;: &quot;solver_model_stage_3.pbtxt&quot;,
+        &quot;目标值&quot;: 119070.0,
+        &quot;界&quot;: 119070.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;总经济成本&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 1.4155606,
+        &quot;模型文件&quot;: &quot;solver_model_stage_4.pbtxt&quot;,
+        &quot;目标值&quot;: 2526607.333818,
+        &quot;界&quot;: 2526607.333818,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;最后完工时间&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 2.6952959,
+        &quot;模型文件&quot;: &quot;solver_model_stage_5.pbtxt&quot;,
+        &quot;目标值&quot;: 39720.0,
+        &quot;界&quot;: 39720.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜1&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 2.4709925000000004,
+        &quot;模型文件&quot;: &quot;solver_model_tie_1.pbtxt&quot;,
+        &quot;目标值&quot;: 144115188075855872,
+        &quot;界&quot;: 1.4411518807585587e+17,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜2&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 1.9416344,
+        &quot;模型文件&quot;: &quot;solver_model_tie_2.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜3&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 1.7886263,
+        &quot;模型文件&quot;: &quot;solver_model_tie_3.pbtxt&quot;,
+        &quot;目标值&quot;: 4096,
+        &quot;界&quot;: 4096.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜4&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 1.391917,
+        &quot;模型文件&quot;: &quot;solver_model_tie_4.pbtxt&quot;,
+        &quot;目标值&quot;: 4194304,
+        &quot;界&quot;: 4194304.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜5&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 2.8794952,
+        &quot;模型文件&quot;: &quot;solver_model_tie_5.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜6&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 1.6577814000000002,
+        &quot;模型文件&quot;: &quot;solver_model_tie_6.pbtxt&quot;,
+        &quot;目标值&quot;: 274877906944,
+        &quot;界&quot;: 274877906944.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜7&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.6790172,
+        &quot;模型文件&quot;: &quot;solver_model_tie_7.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜8&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 2.3016255,
+        &quot;模型文件&quot;: &quot;solver_model_tie_8.pbtxt&quot;,
+        &quot;目标值&quot;: 16,
+        &quot;界&quot;: 16.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜9&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.39633500000000005,
+        &quot;模型文件&quot;: &quot;solver_model_tie_9.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜10&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.4102678,
+        &quot;模型文件&quot;: &quot;solver_model_tie_10.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜11&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.36481630000000004,
+        &quot;模型文件&quot;: &quot;solver_model_tie_11.pbtxt&quot;,
+        &quot;目标值&quot;: 68719476736,
+        &quot;界&quot;: 68719476736.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜12&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.2880487,
+        &quot;模型文件&quot;: &quot;solver_model_tie_12.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜13&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.2922289,
+        &quot;模型文件&quot;: &quot;solver_model_tie_13.pbtxt&quot;,
+        &quot;目标值&quot;: 4194304,
+        &quot;界&quot;: 4194304.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜14&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.06459580000000001,
+        &quot;模型文件&quot;: &quot;solver_model_tie_14.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜15&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.0610805,
+        &quot;模型文件&quot;: &quot;solver_model_tie_15.pbtxt&quot;,
+        &quot;目标值&quot;: 274877906944,
+        &quot;界&quot;: 274877906944.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜16&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.06288110000000001,
+        &quot;模型文件&quot;: &quot;solver_model_tie_16.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜17&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.057353400000000006,
+        &quot;模型文件&quot;: &quot;solver_model_tie_17.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜18&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.053595300000000005,
+        &quot;模型文件&quot;: &quot;solver_model_tie_18.pbtxt&quot;,
+        &quot;目标值&quot;: 1073741824,
+        &quot;界&quot;: 1073741824.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜19&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.048797400000000005,
+        &quot;模型文件&quot;: &quot;solver_model_tie_19.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜20&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.0436145,
+        &quot;模型文件&quot;: &quot;solver_model_tie_20.pbtxt&quot;,
+        &quot;目标值&quot;: 65536,
+        &quot;界&quot;: 65536.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜21&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.0393784,
+        &quot;模型文件&quot;: &quot;solver_model_tie_21.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜22&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.0354485,
+        &quot;模型文件&quot;: &quot;solver_model_tie_22.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜23&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.03431,
+        &quot;模型文件&quot;: &quot;solver_model_tie_23.pbtxt&quot;,
+        &quot;目标值&quot;: 576460752303423488,
+        &quot;界&quot;: 5.764607523034235e+17,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜24&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.030751700000000003,
+        &quot;模型文件&quot;: &quot;solver_model_tie_24.pbtxt&quot;,
+        &quot;目标值&quot;: 16384,
+        &quot;界&quot;: 16384.0,
+        &quot;相对差距&quot;: 0.0
+      },
+      {
+        &quot;目标&quot;: &quot;确定性决胜25&quot;,
+        &quot;方向&quot;: &quot;minimize&quot;,
+        &quot;状态&quot;: &quot;OPTIMAL&quot;,
+        &quot;耗时秒&quot;: 0.0267631,
+        &quot;模型文件&quot;: &quot;solver_model_tie_25.pbtxt&quot;,
+        &quot;目标值&quot;: 0,
+        &quot;界&quot;: 0.0,
+        &quot;相对差距&quot;: 0.0
+      }
+    ],
+    &quot;总耗时秒&quot;: 213.5,
+    &quot;模型成本&quot;: 2526607.333818,
+    &quot;诊断模型&quot;: false,
+    &quot;模型产物文件&quot;: &quot;model_artifact.json&quot;,
+    &quot;模型产物指纹&quot;: &quot;05964b74fe1566094513da0ee2257e3cedb2a86bdbe40a4fc4cbb4656aef8e1c&quot;
+  }
+}</pre></details><p><a href="维修任务明细.csv">下载维修任务表</a> · <a href="结果.json">完整结果</a> · <a href="输入快照.json">输入快照</a></p></html>

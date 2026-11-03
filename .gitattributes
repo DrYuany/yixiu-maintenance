@@ -1,0 +1,13 @@
+# 语言统计口径：GitHub 的 linguist 会把大文件当成"主要语言"，
+# 这个项目曾被一个 2.6 MB 的原型 HTML 判成 HTML 项目。
+# 原型和样例产物是设计参考与证据，不是产品代码，不计入语言构成。
+
+docs/prototype/**   linguist-documentation
+docs/sample-run/**  linguist-documentation
+
+# 构建产物、数据快照不参与统计
+build/**            linguist-generated
+data/**             linguist-data
+
+# 说明性文本
+*.pbtxt             linguist-language=Text

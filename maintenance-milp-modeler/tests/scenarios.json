@@ -1,0 +1,66 @@
+[
+  {
+    "id": "severe-priority-july",
+    "request": "按严重故障优先，叶片和轴承争取7月15日前修完；叶片备件7月5日到；先满足严重故障，再尽量减少停机损失。",
+    "expected_state": "clarification_required",
+    "expected_behavior": ["clarify whether July 15 is hard or soft", "model July 5 stock availability cumulatively", "keep economic loss below the severe service tier", "do not invent task durations/weather/stock quantities"]
+  },
+  {
+    "id": "dynamic-linear-row",
+    "request": "已存在的二元变量 repair_blade 和 repair_bearing 中，至少完成一个。",
+    "expected_state": "ready-if-variable-semantics-confirmed",
+    "expected_behavior": ["compose a new linear row from declared variables", "verify each variable means completion in the requested scope"],
+    "model_spec": {
+      "schema_version": "1.0", "status": "ready", "problem_statement": "Complete at least one severe repair.", "data": {},
+      "variables": [
+        {"id": "repair_blade", "type": "binary", "lower_bound": 0, "upper_bound": 1, "unit": "1"},
+        {"id": "repair_bearing", "type": "binary", "lower_bound": 0, "upper_bound": 1, "unit": "1"}
+      ],
+      "objectives": [{"id": "completion", "priority": 1, "sense": "maximize", "expression": {"constant": 0, "terms": [{"variable": "repair_blade", "coefficient": 1}, {"variable": "repair_bearing", "coefficient": 1}]}}],
+      "constraints": [{"id": "at_least_one", "kind": "linear_row", "meaning": "At least one repair is completed.", "lhs": {"constant": 0, "terms": [{"variable": "repair_blade", "coefficient": 1}, {"variable": "repair_bearing", "coefficient": 1}]}, "sense": ">=", "rhs": 1}],
+      "unresolved_data": [], "assumptions": [], "provenance": []
+    }
+  },
+  {
+    "id": "ratio-objective",
+    "request": "最小化每修好一个风机的平均检修成本，成本和修复数量都由决策决定。",
+    "expected_state": "extension_proposal",
+    "expected_behavior": ["reject ratio as canonical linear objective", "do not dispatch solver", "explain that a valid transformation needs additional domain conditions"]
+  },
+  {
+    "id": "missing-inventory",
+    "request": "所有任务只能使用当前库存和已确认到货的备件。",
+    "expected_state": "clarification_required",
+    "expected_behavior": ["request opening stock and confirmed arrivals by date", "do not assume sufficient stock or zero stock", "gate solver while material inventory data is unresolved"]
+  },
+  {
+    "id": "decision-product",
+    "request": "目标中加入两个故障同时修复的奖励 repair_blade * repair_bearing。",
+    "expected_state": "extension_proposal",
+    "expected_behavior": ["reject variable product in core expression", "only offer a registered binary-product linearization with linking rows and finite domains"]
+  },
+  {
+    "id": "conflicting-window",
+    "request": "海事窗口只允许8月10日至8月30日，但要求所有严重故障必须在7月15日前完成。",
+    "expected_state": "ready-then-solver-infeasible-or-clarify",
+    "expected_behavior": ["surface the direct date conflict", "clarify if one statement is wrong or relaxed", "if both are confirmed hard, encode both and report actual infeasibility only after solving"]
+  },
+  {
+    "id": "preset-routing",
+    "request": "把现有方案切换成经济性优先，其他模型结构不改。",
+    "expected_state": "route-to-maintenance-window-forecast",
+    "expected_behavior": ["use the existing parameter-tuning skill", "do not create a new model merely because this skill is available"]
+  },
+  {
+    "id": "weighted-tradeoff",
+    "request": "我想成本占主导，但高严重故障也要更受重视，完成数量与成本允许折中，库存和维修期限不能放宽。",
+    "expected_state": "ready-if-data-grounded",
+    "expected_behavior": ["select weighted objective mode", "do not attach severity to the cost template because it has no severity metric", "select a registered strategy containing severity and clarify the complete weight vector when cost dominance is requested", "normalize finite linear metrics and record ranges", "preserve inventory and deadline hard constraints"]
+  },
+  {
+    "id": "synthetic-base-set",
+    "request": "用较差海况基座比较这次排程。",
+    "expected_state": "clarification-required-unless-explicitly-hypothetical",
+    "expected_behavior": ["load the configured synthetic base set", "label results hypothetical and synthetic", "never treat generated windows as approved or forecasts as actual"]
+  }
+]

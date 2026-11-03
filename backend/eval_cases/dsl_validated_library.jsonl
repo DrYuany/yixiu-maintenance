@@ -1,0 +1,16 @@
+{"id":"tpl-001","utterance":"任务001和任务002不能在同一天出海维修","dsl":{"constraints":[{"type":"co_occur","mode":"diff_day","tasks":["任务001","任务002"]}]}}
+{"id":"tpl-002","utterance":"先修任务001再修任务022","dsl":{"constraints":[{"type":"precedence","before":"任务001","after":"任务022"}]}}
+{"id":"tpl-003","utterance":"任务018最早11月5日开工","dsl":{"constraints":[{"type":"earliest","task":"任务018","time":"2026-11-05T08:00:00+08:00"}]}}
+{"id":"tpl-004","utterance":"任务005必须修","dsl":{"constraints":[{"type":"must","task":"任务005"}]}}
+{"id":"tpl-005","utterance":"别排任务003","dsl":{"constraints":[{"type":"exclude","task":"任务003"}]}}
+{"id":"tpl-006","utterance":"任务018只能上2号船","dsl":{"constraints":[{"type":"fix","task":"任务018","line":2}]}}
+{"id":"tpl-007","utterance":"任务001最晚11月6日前修完","dsl":{"constraints":[{"type":"deadline","task":"任务001","time":"2026-11-06T08:00:00+08:00"}]}}
+{"id":"tpl-008","utterance":"11月3号不要开工","dsl":{"constraints":[{"type":"forbidden_dates","dates":["2026-11-03T08:00:00+08:00"]}]}}
+{"id":"tpl-009","utterance":"至少完成8项任务","dsl":{"constraints":[{"type":"cardinality","filter":{},"op":">=","value":8}]}}
+{"id":"tpl-010","utterance":"完工时间和不超过180000分钟","dsl":{"constraints":[{"type":"budget","quantity":"完工时间和","op":"<=","value":180000}]}}
+{"id":"tpl-011","utterance":"这两台风机别同时出海","dsl":{"constraints":[{"type":"co_occur","mode":"diff_day","tasks":["任务001","任务002"]}]}}
+{"id":"tpl-012","utterance":"001修完才能动002","dsl":{"constraints":[{"type":"precedence","before":"任务001","after":"任务002"}]}}
+{"id":"tpl-013","utterance":"018用2号线","dsl":{"constraints":[{"type":"fix","task":"任务018","line":2}]}}
+{"id":"tpl-014","utterance":"先最小化完工时间和，再最小化成本","dsl":{"objectives":[{"type":"lexmin","stages":[{"q":"完工时间和","dir":"minimize"}]}]}}
+{"id":"tpl-015","utterance":"先修严重的故障","dsl":{"objectives":[{"type":"lexmin","stages":[{"q":"高严重完成数","dir":"maximize"},{"q":"中严重完成数","dir":"maximize"}]}]}}
+{"id":"tpl-016","utterance":"改成加权，高严重完成数0.6总经济成本0.4","dsl":{"objectives":[{"type":"weighted","weights":{"高严重完成数":0.6,"总经济成本":0.4}}]}}

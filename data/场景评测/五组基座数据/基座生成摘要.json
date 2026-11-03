@@ -1,0 +1,38 @@
+{
+  "配置文件": "data\\场景评测\\五组基座配置.json",
+  "输出目录": "data\\场景评测\\五组基座数据",
+  "场景数量": 5,
+  "每场景数据文件数": 4,
+  "文件哈希": {
+    "基座01": {
+      "海事检修窗口.csv": "f438209ca82a4e1209377644cb4770070cfc20ae1a5d065cfff9f18c54650a9d",
+      "每日海况预测.csv": "15bf43d8dc97b8aaa36057d26abb7c47a4150132562568b88e985e952bb69a09",
+      "每小时电价风速功率.csv": "d066a4152ec70c5c2f086e6e4e92c3d3d2c21b83aed6a4cd5abca003d07f407b",
+      "场景配置快照.json": "593253e110efbc51e0071e4af1563ce2b24c85acb9d3d81e7025497a82d48c16"
+    },
+    "基座02": {
+      "海事检修窗口.csv": "9ba8bf030a74ccbaa9b8dd1d367ea27cdf8816f295ab0fcaf49613042640e23d",
+      "每日海况预测.csv": "15bf43d8dc97b8aaa36057d26abb7c47a4150132562568b88e985e952bb69a09",
+      "每小时电价风速功率.csv": "e9f631b0c87461a978f615c31d9e8d2f4a5dcfe8e358be68ed3550fdd3640024",
+      "场景配置快照.json": "611d491d36bf8a9aa3afb4d78122fd5e53f3c2dce7651b0f674ca22152754a6d"
+    },
+    "基座03": {
+      "海事检修窗口.csv": "6a75308385cf1b1992ce444efed5fa760afd3ee49b1c0280b0292658fc9b458a",
+      "每日海况预测.csv": "15bf43d8dc97b8aaa36057d26abb7c47a4150132562568b88e985e952bb69a09",
+      "每小时电价风速功率.csv": "4a7548b8b22e64decd5cd3710c7318f651a8f18e5982a79d11ec801b3a53b98b",
+      "场景配置快照.json": "62df63aec29b91bbd0505f206ae475966f8e9bd5b59bed1be0f1229d4cc2bc56"
+    },
+    "基座04": {
+      "海事检修窗口.csv": "6cb6cb190bb06b176c3bc9d9224a4dca5474cacbf4ae5336401efdad8da00c68",
+      "每日海况预测.csv": "15bf43d8dc97b8aaa36057d26abb7c47a4150132562568b88e985e952bb69a09",
+      "每小时电价风速功率.csv": "ff20c53f9aea1a0da0be2d0e125af4978800148860e24a1e442511e8be98523e",
+      "场景配置快照.json": "12f6719761bcdd776400e81e84d1da4f55110b7f03a83b5fade111e713349e66"
+    },
+    "基座05": {
+      "海事检修窗口.csv": "d2a74e50ff1cc16c8fdbc2f1335431df72078f59272cc1a517e6a0a7259bad0f",
+      "每日海况预测.csv": "260b126f0cf3caaae1dc4010f1dc3ad6e042b3534ef552b2d69491a93f8b1cbe",
+      "每小时电价风速功率.csv": "d066a4152ec70c5c2f086e6e4e92c3d3d2c21b83aed6a4cd5abca003d07f407b",
+      "场景配置快照.json": "0bb5b4ff06b3f119569e2898021379645be3bfb0896011b0123383b8cd739cbd"
+    }
+  }
+}

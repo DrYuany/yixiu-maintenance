@@ -1,0 +1,417 @@
+[
+  {
+    "utterance": "按成本最低优先排每天只能干8小时",
+    "elapsed": 1.08,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "parameters": [
+          {
+            "field": "每日有效维修上限",
+            "op": "=",
+            "value": 8
+          }
+        ],
+        "constraints": [],
+        "objectives": [
+          {
+            "type": "strategy",
+            "name": "成本最低优先"
+          }
+        ],
+        "data": []
+      },
+      "spans": [
+        {
+          "text": "按成本最低优先",
+          "into": "objectives[0].name"
+        },
+        {
+          "text": "每天只能干8小时",
+          "into": "parameters[0].value"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.95
+    },
+    "validate_errors": [],
+    "covered_len": 15
+  },
+  {
+    "utterance": "钱不超过300万",
+    "elapsed": 1.0,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "parameters": [],
+        "constraints": [
+          {
+            "type": "budget",
+            "quantity": "现金支出",
+            "op": "<=",
+            "value": 3000000
+          }
+        ],
+        "objectives": [],
+        "data": []
+      },
+      "spans": [
+        {
+          "text": "钱不超过300万",
+          "into": "constraints[0].value"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.95
+    },
+    "validate_errors": [],
+    "covered_len": 8
+  },
+  {
+    "utterance": "船租翻倍了，重新排一下",
+    "elapsed": 1.14,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "parameters": [
+          {
+            "field": "船舶日租金",
+            "op": "=",
+            "value": 24000
+          }
+        ]
+      },
+      "spans": [
+        {
+          "text": "船租翻倍了",
+          "into": "parameters[0].value"
+        },
+        {
+          "text": "重新排一下",
+          "into": "route"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.9
+    },
+    "validate_errors": [],
+    "covered_len": 10
+  },
+  {
+    "utterance": "经济优先和风险优先差多少",
+    "elapsed": 0.58,
+    "payload": {
+      "route": "compare",
+      "dsl": null,
+      "spans": [
+        {
+          "text": "经济优先和风险优先差多少",
+          "into": "compare"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.85
+    },
+    "validate_errors": [],
+    "covered_len": 12
+  },
+  {
+    "utterance": "先修任务001再修任务002，钱别超300万",
+    "elapsed": 1.2,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "parameters": [],
+        "constraints": [
+          {
+            "type": "precedence",
+            "before": "任务001",
+            "after": "任务002"
+          },
+          {
+            "type": "budget",
+            "quantity": "现金支出",
+            "op": "<=",
+            "value": 3000000
+          }
+        ],
+        "objectives": [],
+        "data": []
+      },
+      "spans": [
+        {
+          "text": "先修任务001再修任务002",
+          "into": "constraints[0]"
+        },
+        {
+          "text": "钱别超300万",
+          "into": "constraints[1].value"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.95
+    },
+    "validate_errors": [],
+    "covered_len": 21
+  },
+  {
+    "utterance": "只排风机003的任务",
+    "elapsed": 0.98,
+    "payload": {
+      "route": "clarify",
+      "dsl": null,
+      "spans": [
+        {
+          "text": "只排风机003的任务",
+          "into": "unresolved"
+        }
+      ],
+      "unresolved": [
+        "只排风机003的任务"
+      ],
+      "ask": "目前只能按任务编号逐条指定，不能按风机或部件圈定范围；请给出要排的任务编号。",
+      "confidence": 0.9
+    },
+    "validate_errors": [],
+    "covered_len": 10
+  },
+  {
+    "utterance": "每天只能干8小时，另外最多上2条作业线，别排任务005",
+    "elapsed": 1.47,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "parameters": [
+          {
+            "field": "每日有效维修上限",
+            "op": "=",
+            "value": 8
+          },
+          {
+            "field": "最大作业线",
+            "op": "=",
+            "value": 2
+          }
+        ],
+        "constraints": [
+          {
+            "type": "exclude",
+            "task": "任务005"
+          }
+        ],
+        "objectives": [],
+        "data": []
+      },
+      "spans": [
+        {
+          "text": "每天只能干8小时",
+          "into": "parameters[0].value"
+        },
+        {
+          "text": "另外",
+          "into": "parameters[1].field"
+        },
+        {
+          "text": "最多上2条作业线",
+          "into": "parameters[1].value"
+        },
+        {
+          "text": "别排任务005",
+          "into": "constraints[0].task"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.95
+    },
+    "validate_errors": [],
+    "covered_len": 25
+  },
+  {
+    "utterance": "为什么这一版比上一版贵了20万",
+    "elapsed": 0.97,
+    "payload": {
+      "route": "explain",
+      "dsl": null,
+      "spans": [
+        {
+          "text": "为什么这一版比上一版贵了20万",
+          "into": "explain"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.9
+    },
+    "validate_errors": [],
+    "covered_len": 15
+  },
+  {
+    "utterance": "任务001和任务002不要同一天做",
+    "elapsed": 1.03,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "constraints": [
+          {
+            "type": "co_occur",
+            "mode": "diff_day",
+            "tasks": [
+              "任务001",
+              "任务002"
+            ]
+          }
+        ]
+      },
+      "spans": [
+        {
+          "text": "任务001和任务002",
+          "into": "constraints[0].tasks"
+        },
+        {
+          "text": "不要同一天做",
+          "into": "constraints[0].mode"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.95
+    },
+    "validate_errors": [],
+    "covered_len": 17
+  },
+  {
+    "utterance": "明天风大，先别出海",
+    "elapsed": 0.76,
+    "payload": {
+      "route": "modify_data",
+      "dsl": {
+        "data": [
+          {
+            "kind": "weather",
+            "day": "明天",
+            "state": "不可作业"
+          }
+        ]
+      },
+      "spans": [
+        {
+          "text": "明天风大",
+          "into": "data[0].state"
+        },
+        {
+          "text": "先别出海",
+          "into": "data[0].state"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.55
+    },
+    "validate_errors": [],
+    "covered_len": 8
+  },
+  {
+    "utterance": "成本压到最低，但高风险的必须全修",
+    "elapsed": 0.88,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "parameters": [],
+        "constraints": [
+          {
+            "type": "cardinality",
+            "filter": {
+              "severity": "高"
+            },
+            "op": ">=",
+            "value": 1
+          }
+        ],
+        "objectives": [
+          {
+            "type": "strategy",
+            "name": "成本最低优先"
+          }
+        ],
+        "data": []
+      },
+      "spans": [
+        {
+          "text": "成本压到最低",
+          "into": "objectives[0].name"
+        },
+        {
+          "text": "高风险的必须全修",
+          "into": "constraints[0]"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.55
+    },
+    "validate_errors": [],
+    "covered_len": 14
+  },
+  {
+    "utterance": "试试看能不能三天干完",
+    "elapsed": 1.14,
+    "payload": {
+      "route": "clarify",
+      "dsl": null,
+      "spans": [
+        {
+          "text": "试试看能不能三天干完",
+          "into": "unresolved"
+        }
+      ],
+      "unresolved": [
+        "试试看能不能三天干完"
+      ],
+      "ask": "“三天干完”没有对应的可调参数或约束原语，无法直接表达；你是想缩短每天维修时段、提高每日有效维修上限，还是指定某个任务的截止时间？",
+      "confidence": 0.3
+    },
+    "validate_errors": [],
+    "covered_len": 10
+  },
+  {
+    "utterance": "预算改成350万，其他不动",
+    "elapsed": 0.73,
+    "payload": {
+      "route": "modify_plan",
+      "dsl": {
+        "parameters": [],
+        "constraints": [
+          {
+            "type": "budget",
+            "quantity": "现金支出",
+            "op": "<=",
+            "value": 3500000
+          }
+        ],
+        "objectives": [],
+        "data": []
+      },
+      "spans": [
+        {
+          "text": "预算改成350万",
+          "into": "constraints[0].value"
+        },
+        {
+          "text": "其他不动",
+          "into": "constraints[0].op"
+        }
+      ],
+      "unresolved": [],
+      "ask": null,
+      "confidence": 0.95
+    },
+    "validate_errors": [],
+    "covered_len": 12
+  }
+]

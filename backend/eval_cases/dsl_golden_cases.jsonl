@@ -1,0 +1,3 @@
+{"id":"co-occur-diff-day","name":"任务001和002不能同一天","dsl":{"constraints":[{"type":"co_occur","mode":"diff_day","tasks":["任务001","任务002"]}]},"check":"diff_day","tasks":["任务001","任务002"]}
+{"id":"precedence-before-after","name":"先修001再修002","dsl":{"constraints":[{"type":"precedence","before":"任务001","after":"任务002"}]},"check":"finish_before_start","tasks":["任务001","任务002"]}
+{"id":"earliest-not-before","name":"任务001最早11月5日开工","dsl":{"constraints":[{"type":"earliest","task":"任务001","time":"2026-11-05T08:00:00+08:00"}]},"check":"start_after","tasks":["任务001"],"time":"2026-11-05T08:00:00+08:00"}

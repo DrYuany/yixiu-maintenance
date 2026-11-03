@@ -1,0 +1,79 @@
+# ── 密钥与本地环境（绝不能提交）──────────────────────────────
+.env
+.env.*
+backend/.env
+backend/.env.local
+voice-bridge/server/.env
+# 但示例文件必须入库，否则别人拿到仓库不知道要配什么
+!.env.example
+!backend/.env.example
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# ── Node / 前端 ──────────────────────────────────────────────
+node_modules/
+dist/
+build/
+
+# ── 求解产物与运行日志（可复现，不入库）──────────────────────
+product-output/
+data/agent.db
+data/*.db
+data/*.db-wal
+data/*.db-shm
+.runlogs/
+*.log
+
+# ── Agent / 工具本地状态 ─────────────────────────────────────
+.superpowers/
+.workbuddy/
+
+# ── IDE / 系统 ───────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 调试/本地数据库
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+
+# ── git worktree（多窗口并行开发）─────────────────────────────
+.worktrees/
+
+# 本地视觉自检产物（esbuild 打包 + headless 截图）
+.tmp-preview/
+
+# ── 演示用的二进制安装包（从官网下，不入库）────────────────────
+scripts/bin/
+*.msi
+
+# ── 不入库的旁支项目（本地保留，2026-11-01 移出版本库）──────────
+# 语音链路「随声译」：独立产品，与排程主链路代码零耦合、主产品测试不覆盖它。
+# 留着会让外部读者把两个产品看成一个。本地目录不动，只是不再跟踪。
+voice-bridge/
+
+# 云端发布用的裁剪包，由 scripts/build_deploy.py 生成，随时可重建
+.deploy/
+
+# 本地临时产物（截图、配额测试库等）
+.tmp/
+.pytest_tmp/
+
+# WorkBuddy 本地应用卡产物（会话临时文件，不入库）
+.wbapp_*.genie
+
+# ── 小一修：每次求解的产物目录（指纹命名，本地可复跑） ──
+小一修/runs/
+
+# ── 小一修的单文件原型（由 make-standalone 在 VITE_PRODUCT_NAME=小一修 时生成） ──
+检修窗口原型-小一修.html

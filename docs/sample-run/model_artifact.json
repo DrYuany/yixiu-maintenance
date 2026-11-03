@@ -1,0 +1,868 @@
+{
+  "schemaVersion": "maintenance-model-artifact-v1",
+  "modelType": "CP-SAT bounded integer scheduling with linear cost",
+  "problemStatement": "在已批准海事窗口、安全海况、库存、船线、人员、每日工时和任务期限内，选择可执行维修任务及其开工时间，并按声明的分层或加权目标优化。",
+  "strategy": "高风险优先抢修",
+  "mode": "分层",
+  "weights": null,
+  "limits": {},
+  "partialDiagnostic": false,
+  "modelFingerprint": "05964b74fe1566094513da0ee2257e3cedb2a86bdbe40a4fc4cbb4656aef8e1c",
+  "dataSnapshot": {
+    "inputHash": "a105c4ee6f411c23420017e87c7bc99c1a1cb6a723766e0fcb6e7758b1edbbf0",
+    "runHash": "2da9dbeefc3c3be3e460e527c2c222165150c5a296424f94a80bf0f6c16c1e3c",
+    "asOf": "2026-10-29T19:56:00+08:00",
+    "dataNature": "合成",
+    "source": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+    "planningBoundary": "2026-11-05T19:56:00+08:00",
+    "targetWindow": "窗口03",
+    "businessVersion": null
+  },
+  "dimensions": {
+    "tasks": 12,
+    "windows": 1,
+    "workLines": 3,
+    "candidateChoices": 1446
+  },
+  "variables": {
+    "total": 1493,
+    "groups": [
+      {
+        "id": "task_choice",
+        "name": "task_choice",
+        "type": "binary",
+        "count": 1446,
+        "lowerBound": 0,
+        "upperBound": 1,
+        "meaning": "任务 i 在候选 k、作业线 l 上执行时为 1，否则为 0",
+        "samples": [
+          "x_任务001_0_1",
+          "x_任务001_0_2",
+          "x_任务001_0_3",
+          "x_任务001_1_1",
+          "x_任务001_1_2"
+        ]
+      },
+      {
+        "id": "rental_prefix",
+        "name": "rental_prefix",
+        "type": "binary",
+        "count": 15,
+        "lowerBound": 0,
+        "upperBound": 1,
+        "meaning": "某作业线在某日已有作业开始时为 1",
+        "samples": [
+          "prefix_1_23",
+          "prefix_1_24",
+          "prefix_1_25",
+          "prefix_1_26",
+          "prefix_1_27"
+        ]
+      },
+      {
+        "id": "rental_suffix",
+        "name": "rental_suffix",
+        "type": "binary",
+        "count": 15,
+        "lowerBound": 0,
+        "upperBound": 1,
+        "meaning": "某作业线在某日仍有作业未结束时为 1",
+        "samples": [
+          "suffix_1_23",
+          "suffix_1_24",
+          "suffix_1_25",
+          "suffix_1_26",
+          "suffix_1_27"
+        ]
+      },
+      {
+        "id": "rental_day",
+        "name": "rental_day",
+        "type": "binary",
+        "count": 15,
+        "lowerBound": 0,
+        "upperBound": 1,
+        "meaning": "某作业线在某日需要租船时为 1",
+        "samples": [
+          "rent_1_23",
+          "rent_1_24",
+          "rent_1_25",
+          "rent_1_26",
+          "rent_1_27"
+        ]
+      },
+      {
+        "id": "other",
+        "name": "other",
+        "type": "integer",
+        "count": 1,
+        "lowerBound": 1,
+        "upperBound": 1,
+        "meaning": "CP-SAT 辅助变量",
+        "samples": [
+          ""
+        ]
+      },
+      {
+        "id": "makespan",
+        "name": "makespan",
+        "type": "integer",
+        "count": 1,
+        "lowerBound": 0,
+        "upperBound": 40320,
+        "meaning": "所有已选维修任务的最晚完工分钟",
+        "samples": [
+          "最后完工时间"
+        ]
+      }
+    ]
+  },
+  "objectives": {
+    "mode": "分层",
+    "stages": [
+      {
+        "priority": 1,
+        "name": "高严重完工时间和",
+        "sense": "minimize",
+        "formula": "高严重完工时间和 = Σ_{严重等级=高} 完工分钟(i,k) × x(i,k,l)",
+        "expressionCharacters": 10229,
+        "expressionTermCount": 414,
+        "expressionPreview": "((35360 * x_任务001_0_1) + (35360 * x_任务001_0_2) + (35360 * x_任务001_0_3) + (35400 * x_任务001_1_1) + (35400 * x_任务001_1_2) + (35400 * x_任务001_1_3) + …（共 414 项）"
+      },
+      {
+        "priority": 2,
+        "name": "中严重完工时间和",
+        "sense": "minimize",
+        "formula": "中严重完工时间和 = Σ_{严重等级=中} 完工分钟(i,k) × x(i,k,l)",
+        "expressionCharacters": 15449,
+        "expressionTermCount": 624,
+        "expressionPreview": "((35120 * x_任务005_0_1) + (35120 * x_任务005_0_2) + (35120 * x_任务005_0_3) + (35160 * x_任务005_1_1) + (35160 * x_任务005_1_2) + (35160 * x_任务005_1_3) + …（共 624 项）"
+      },
+      {
+        "priority": 3,
+        "name": "低严重完工时间和",
+        "sense": "minimize",
+        "formula": "低严重完工时间和 = Σ_{严重等级=低} 完工分钟(i,k) × x(i,k,l)",
+        "expressionCharacters": 10109,
+        "expressionTermCount": 408,
+        "expressionPreview": "((33960 * x_任务009_0_1) + (33960 * x_任务009_0_2) + (33960 * x_任务009_0_3) + (34020 * x_任务009_1_1) + (34020 * x_任务009_1_2) + (34020 * x_任务009_1_3) + …（共 408 项）"
+      },
+      {
+        "priority": 4,
+        "name": "总经济成本",
+        "sense": "minimize",
+        "formula": "总经济成本 = 固定停机损失常数 + Σ(任务直接成本 + 停机损失变化) × x(i,k,l) + Σ 船租 × 租船日变量 y(line,day)",
+        "expressionCharacters": 44190,
+        "expressionTermCount": 1462,
+        "expressionPreview": "((12083989595 * x_任务001_0_1) + (12083989595 * x_任务001_0_2) + (12083989595 * x_任务001_0_3) + (11897052094 * x_任务001_1_1) + (11897052094 * x_任务001_1_2) + (11897052094 * x_任务001_1_3) + …（共 1462 项）"
+      },
+      {
+        "priority": 5,
+        "name": "最后完工时间",
+        "sense": "minimize",
+        "formula": "最后完工时间 = max(完工分钟(i,k) × x(i,k,l))",
+        "expressionCharacters": 6,
+        "expressionTermCount": 1,
+        "expressionPreview": "最后完工时间"
+      }
+    ],
+    "weights": null
+  },
+  "constraints": {
+    "total": 3387,
+    "groups": [
+      {
+        "kind": "interval",
+        "count": 2892,
+        "meaning": "候选维修作业的可选时间区间，由任务选择变量启用",
+        "names": [
+          "line_x_任务001_0_1",
+          "turbine_x_任务001_0_1",
+          "line_x_任务001_0_2",
+          "turbine_x_任务001_0_2",
+          "line_x_任务001_0_3"
+        ]
+      },
+      {
+        "kind": "linear",
+        "count": 433,
+        "meaning": "任务选择、库存累计、船租启用和业务上下界等线性约束",
+        "names": []
+      },
+      {
+        "kind": "lin_max",
+        "count": 31,
+        "meaning": "最大完工、租船日启用和停机损失线性化辅助约束",
+        "names": []
+      },
+      {
+        "kind": "bool_or",
+        "count": 16,
+        "meaning": "布尔或逻辑约束",
+        "names": []
+      },
+      {
+        "kind": "no_overlap",
+        "count": 15,
+        "meaning": "同一作业线或同一风机上的作业时间不得重叠",
+        "names": []
+      }
+    ],
+    "samples": [
+      {
+        "id": "linear_211",
+        "expression": "x_任务001_0_1 + x_任务001_0_2 + x_任务001_0_3 + x_任务001_1_1 + x_任务001_1_2 + x_任务001_1_3 + x_任务001_2_1 + x_任务001_2_2 + …（共 105 项） = 1",
+        "variableCount": 105,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_434",
+        "expression": "x_任务002_0_1 + x_任务002_0_2 + x_任务002_0_3 + x_任务002_1_1 + x_任务002_1_2 + x_任务002_1_3 + x_任务002_2_1 + x_任务002_2_2 + …（共 111 项） = 1",
+        "variableCount": 111,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_645",
+        "expression": "x_任务003_0_1 + x_任务003_0_2 + x_任务003_0_3 + x_任务003_1_1 + x_任务003_1_2 + x_任务003_1_3 + x_任务003_2_1 + x_任务003_2_2 + …（共 105 项） = 1",
+        "variableCount": 105,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_832",
+        "expression": "x_任务004_0_1 + x_任务004_0_2 + x_任务004_0_3 + x_任务004_1_1 + x_任务004_1_2 + x_任务004_1_3 + x_任务004_2_1 + x_任务004_2_2 + …（共 93 项） = 1",
+        "variableCount": 93,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_1067",
+        "expression": "x_任务005_0_1 + x_任务005_0_2 + x_任务005_0_3 + x_任务005_1_1 + x_任务005_1_2 + x_任务005_1_3 + x_任务005_2_1 + x_任务005_2_2 + …（共 117 项） = 1",
+        "variableCount": 117,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_1338",
+        "expression": "x_任务006_0_1 + x_任务006_0_2 + x_任务006_0_3 + x_任务006_1_1 + x_任务006_1_2 + x_任务006_1_3 + x_任务006_2_1 + x_任务006_2_2 + …（共 135 项） = 1",
+        "variableCount": 135,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_1609",
+        "expression": "x_任务007_0_1 + x_任务007_0_2 + x_任务007_0_3 + x_任务007_1_1 + x_任务007_1_2 + x_任务007_1_3 + x_任务007_2_1 + x_任务007_2_2 + …（共 135 项） = 1",
+        "variableCount": 135,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_1862",
+        "expression": "x_任务008_0_1 + x_任务008_0_2 + x_任务008_0_3 + x_任务008_1_1 + x_任务008_1_2 + x_任务008_1_3 + x_任务008_2_1 + x_任务008_2_2 + …（共 126 项） = 1",
+        "variableCount": 126,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_2133",
+        "expression": "x_任务009_0_1 + x_任务009_0_2 + x_任务009_0_3 + x_任务009_1_1 + x_任务009_1_2 + x_任务009_1_3 + x_任务009_2_1 + x_任务009_2_2 + …（共 135 项） = 1",
+        "variableCount": 135,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_2410",
+        "expression": "x_任务010_0_1 + x_任务010_0_2 + x_任务010_0_3 + x_任务010_1_1 + x_任务010_1_2 + x_任务010_1_3 + x_任务010_2_1 + x_任务010_2_2 + …（共 138 项） = 1",
+        "variableCount": 138,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_2681",
+        "expression": "x_任务011_0_1 + x_任务011_0_2 + x_任务011_0_3 + x_任务011_1_1 + x_任务011_1_2 + x_任务011_1_3 + x_任务011_2_1 + x_任务011_2_2 + …（共 135 项） = 1",
+        "variableCount": 135,
+        "lowerBound": 1,
+        "upperBound": 1
+      },
+      {
+        "id": "linear_2904",
+        "expression": "x_任务012_0_1 + x_任务012_0_2 + x_任务012_0_3 + x_任务012_1_1 + x_任务012_1_2 + x_任务012_1_3 + x_任务012_2_1 + x_任务012_2_2 + …（共 111 项） = 1",
+        "variableCount": 111,
+        "lowerBound": 1,
+        "upperBound": 1
+      }
+    ],
+    "expressionNote": "样本来自本次 CP-SAT 线性约束的真实变量名、系数和上下界；超长行只截取前 8 项并标注总项数。"
+  },
+  "parameters": [
+    {
+      "id": "中严重度截止窗口序号",
+      "label": "中严重度截止窗口序号",
+      "value": 2,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "临近窗口口径",
+      "label": "临近窗口口径",
+      "value": "包括告警发生时仍在进行的窗口；按首次发生时间锁定序号，临近结束无法修完时报告冲突，不顺延",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "人员总上限",
+      "label": "人员总上限",
+      "value": 30,
+      "unit": "人",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "人工单价（元每人时）",
+      "label": "人工单价",
+      "value": 150.0,
+      "unit": "元/人时",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "低严重度截止窗口序号",
+      "label": "低严重度截止窗口序号",
+      "value": 3,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "候选开工粒度",
+      "label": "候选开工粒度",
+      "value": 60.0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "允许夜间转移",
+      "label": "允许夜间转移",
+      "value": "是",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "动员费（元）",
+      "label": "动员费（元）",
+      "value": 0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "备件预留时点",
+      "label": "备件预留时点",
+      "value": "审批通过",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "安全最大有效波高（米）",
+      "label": "安全最大有效波高（米）",
+      "value": 1.5,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "安全最大风速（米每秒）",
+      "label": "安全最大风速（米每秒）",
+      "value": 12.0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "实物扣减时点",
+      "label": "实物扣减时点",
+      "value": "实际领料",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "常态最大有效波高（米）",
+      "label": "常态最大有效波高（米）",
+      "value": 1.0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "常态最大风速（米每秒）",
+      "label": "常态最大风速（米每秒）",
+      "value": 10.0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "总天数",
+      "label": "总天数",
+      "value": 35,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "总跨度",
+      "label": "总跨度",
+      "value": "五周",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "截止规则",
+      "label": "截止规则",
+      "value": "首次规划锁定未来第几个海事窗口，不因海况或库存冲突顺延",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "故障等待发电损失比例",
+      "label": "故障等待发电损失比例",
+      "value": 0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "数据开始时间",
+      "label": "数据开始时间",
+      "value": "2026-10-23T00:00:00+08:00",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "数据结束时间（不含）",
+      "label": "数据结束时间（不含）",
+      "value": "2026-11-27T00:00:00+08:00",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "时区",
+      "label": "时区",
+      "value": "北京时间",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "时间步长（小时）",
+      "label": "时间步长（小时）",
+      "value": 1.0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "是否自动审批",
+      "label": "是否自动审批",
+      "value": "否",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "最多作业线数",
+      "label": "最多作业线数",
+      "value": 3,
+      "unit": "条",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "每任务固定维修人数",
+      "label": "每任务固定维修人数",
+      "value": 1,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "每天最多维修小时数",
+      "label": "每天最多维修小时数",
+      "value": 10.0,
+      "unit": "小时/天",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "每天维修开始时间",
+      "label": "每日维修开始时间",
+      "value": "08:00",
+      "unit": "时刻",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "每天维修结束时间",
+      "label": "每日维修结束时间",
+      "value": "18:00",
+      "unit": "时刻",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "每日告警处理时间",
+      "label": "每日告警处理时间",
+      "value": "每天18:00；仅使用当时及以前已收到的告警，不读取未来告警",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "求解时间上限（秒）",
+      "label": "求解时间上限（秒）",
+      "value": 60,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "求解相对差距",
+      "label": "求解相对差距",
+      "value": 0.01,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "窗口最短天数",
+      "label": "窗口最短天数",
+      "value": 5,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "窗口最长天数",
+      "label": "窗口最长天数",
+      "value": 10,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "窗口间最短停工天数",
+      "label": "窗口间最短停工天数",
+      "value": 3,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "等待和转移人工单价（元每人时）",
+      "label": "等待和转移人工单价（元每人时）",
+      "value": 0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "维修停机规则",
+      "label": "维修停机规则",
+      "value": "任务开工至完工整机停机，含暂停；同机停机区间合并",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "维修进度规则",
+      "label": "维修进度规则",
+      "value": "各天有效维修小时除以当天海况对应总工时，再累加至一",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "船租计费规则",
+      "label": "船租计费规则",
+      "value": "按北京时间自然日；同窗口首任务开工至末任务完成持续计租，等待及转移照计；跨窗口退租",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "船租（元每艘每天）",
+      "label": "船租",
+      "value": 12000.0,
+      "unit": "元/艘/天",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "规划时间",
+      "label": "规划时间",
+      "value": "2026-10-22T18:00:00+08:00",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "计划消耗时点",
+      "label": "计划消耗时点",
+      "value": "维修开工",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "跨天暂停",
+      "label": "跨天暂停",
+      "value": "允许并保留进度",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "跨窗口维修",
+      "label": "跨窗口维修",
+      "value": "不允许",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "转移规则",
+      "label": "转移规则",
+      "value": "仅在安全且获批时段累计实际小时，允许夜间，不占维修工时额度",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "重复告警处理",
+      "label": "重复告警处理",
+      "value": "同告警编号更新接收记录，不新增任务，不重置期限",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "预测性质",
+      "label": "预测性质",
+      "value": "五周全量合成情景，不代表真实天气或电价预报精度",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "预测期外截止窗口",
+      "label": "预测期外截止窗口",
+      "value": "不足所需窗口数量时标记待补充后续窗口，不自动压缩为预测期末",
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "额外燃油费（元）",
+      "label": "额外燃油费（元）",
+      "value": 0,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "风机间转移小时数",
+      "label": "风机间转移时间",
+      "value": 6.0,
+      "unit": "小时",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    },
+    {
+      "id": "高严重度截止窗口序号",
+      "label": "高严重度截止窗口序号",
+      "value": 1,
+      "unit": "按基础数据定义",
+      "source": "基座参数快照",
+      "baseSource": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+      "dataNature": "合成",
+      "asOf": "2026-10-29T19:56:00+08:00",
+      "override": false
+    }
+  ],
+  "solverParameters": {
+    "num_search_workers": 1,
+    "random_seed": 17,
+    "max_time_in_seconds": 300
+  },
+  "provenance": {
+    "artifactGenerator": "product_planner.build_model_artifact/v1",
+    "sourceFile": "D:\\文档\\赋风交接\\AI窗口期预测产品\\data\\phase1-demo\\初版完整数据.json",
+    "generatedFrom": "actual CP-SAT model built for this solve",
+    "note": "变量和约束数量来自本次 CP-SAT Proto；目标公式为生成模型时的实际结构摘要。"
+  },
+  "rawModel": {
+    "file": "solver_model.pbtxt",
+    "sha256": "bd9d5e5fe11396d2076c7c832bf5710b9d469b7eb81151a8f0345c0754c78371",
+    "sizeBytes": 1490017
+  },
+  "artifactFile": "model_artifact.json"
+}
