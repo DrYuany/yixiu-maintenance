@@ -530,6 +530,22 @@ class AgentRuntime:
         # 3. 兜底：模型不可用，如实回显
         return self._finalize_response(conversation_id, "这句没接：没有对应的旋钮。", "change_rejected", memory.activeView, [])
 
+    def batch_progress(self, conversation_id: str) -> dict[str, int] | None:
+        """当前会话还有没有没算完的场景。前端靠它决定要不要继续轮询。
+
+        小一修是单次填槽（没有多场景），pendingBatch 永不存在，恒返回 None；
+        但 agent.py 的 /jobs 接口会调它，所以保留这个共享方法。
+        """
+        memory = self.memories.get_or_create(conversation_id)
+        batch = (memory.activeFilters or {}).get("pendingBatch")
+        if not isinstance(batch, dict):
+            return None
+        total = int(batch.get("total") or 0)
+        if total <= 0:
+            return None
+        done = len(batch.get("completed") or [])
+        return {"position": min(done + 1, total), "total": total}
+
     def _submit_pending_change(self, conversation_id, pending, reason):
         memory = self.memories.get_or_create(conversation_id)
         if pending.get("kind") != "yx":
