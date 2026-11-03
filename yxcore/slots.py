@@ -81,7 +81,7 @@ def _load_strategy_names() -> tuple[str, ...]:
     自己编名字的代价是灾难性的：内核按模板编号查表，查不到就 StopIteration 崩在求解里，
     而且崩点离用户的那句「越早干完越好」隔着三层。名字只有内核这一份事实来源。
     """
-    path = (Path(__file__).resolve().parents[2] / "maintenance-milp-modeler"
+    path = (Path(__file__).resolve().parents[1] / "maintenance-milp-modeler"
             / "references" / "四种目标模板.json")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -430,7 +430,7 @@ def _resolve_entities():
     import sys
     from pathlib import Path
 
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     from dsl_core.registry import entities  # noqa: PLC0415
