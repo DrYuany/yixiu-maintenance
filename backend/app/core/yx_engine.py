@@ -10,6 +10,9 @@
 """
 from __future__ import annotations
 
+from __future__ import annotations
+
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -24,7 +27,7 @@ from app.schemas.agent import (
 
 SHANGHAI_TZ = timezone(timedelta(hours=8))
 
-_SOLVE_SECONDS = 60
+_SOLVE_SECONDS = int(os.environ.get("XYX_SOLVE_SECONDS", "300"))
 
 
 def _iso_stamp(data: Any, minute: int) -> str:

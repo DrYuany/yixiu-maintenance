@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -488,33 +488,47 @@ class AgentRuntime:
         if compare_reply is not None:
             return self._finalize_response(conversation_id, compare_reply, "version_compare", memory.activeView, [])
 
-        # 2. LLM 工具循环（主路径）：查询 / 开放问题 / 改排程都交给模型判断
-        if self.conversation_agent.enabled:
-            try:
-                reply = self._answer_with_conversation_agent(
-                    conversation_id=conversation_id,
-                    content=content,
-                    history=self.messages.list_by_conversation(conversation_id),
-                    memory=memory,
-                    selected_version=selected_version,
-                    sink=sink,
-                )
-                submitted = getattr(self._tls, "submitted_response", None)
-                if submitted is not None:
-                    return submitted
-                latest = self.memories.get_or_create(conversation_id)
-                pending_now = (latest.activeFilters or {}).get("pendingChange")
-                created_now = isinstance(pending_now, dict) and pending_now.get("sourcePrompt") == content
-                return self._finalize_response(
-                    conversation_id, reply,
-                    "change_preview" if created_now else "assistant_reply",
-                    latest.activeView, [],
-                )
-            except ConversationAgentError as exc:
-                self._note_degradation("agent_unavailable", "模型这一轮没答上来，用规则兜底。", str(exc))
+        # 2. 改排程优先：yxcore 槽位翻译（可靠、确定性填槽）。翻不出旋钮（=不是排程约束）→ LLM 问答。
+        engine = self._yx_engine(conversation_id)
+        try:
+            turn = engine.say(content, timeout=90)
+        except Exception:  # noqa: BLE001
+            turn = None
+        if turn is not None:
+            echo = turn.echo()
+            is_change = bool(turn.新增 or turn.修订 or turn.撤销) and not turn.错误 and not turn.拒绝
+            if not is_change:
+                # 不是排程约束（问题/开放问句/越界）→ 复用一修的 LLM 工具循环答
+                if self.conversation_agent.enabled:
+                    try:
+                        reply = self._answer_with_conversation_agent(
+                            conversation_id=conversation_id,
+                            content=content,
+                            history=self.messages.list_by_conversation(conversation_id),
+                            memory=memory,
+                            selected_version=selected_version,
+                            sink=sink,
+                        )
+                        return self._finalize_response(conversation_id, reply, "assistant_reply", memory.activeView, [])
+                    except ConversationAgentError as exc:
+                        self._note_degradation("agent_unavailable", "模型这一轮没答上来。", str(exc))
+                text = "\n".join(f"- {line}" for line in echo)
+                action = "change_rejected" if turn.拒绝 else "assistant_reply"
+                return self._finalize_response(conversation_id, text, action, memory.activeView, [])
+            # 是排程约束：出预览（预览 → 确认 → 求解）
+            summary = engine.session.summary()
+            lines = [f"- {line}" for line in echo]
+            if summary:
+                lines.append("")
+                lines.append("现在按这些在排：")
+                lines.extend(f"- {line}" for line in summary)
+            preview = "\n".join(lines)
+            payload = {"kind": "yx", "sourcePrompt": content, "utterance": content, "preview": preview}
+            self._persist_agent_pending(conversation_id, payload)
+            return self._finalize_response(conversation_id, preview, "change_preview", memory.activeView, [])
 
-        # 3. 兜底：LLM 不可用时，改排程走 yxcore 直接翻译
-        return self._yx_solve(conversation_id, content, memory, sink)
+        # 3. 兜底：模型不可用，如实回显
+        return self._finalize_response(conversation_id, "这句没接：没有对应的旋钮。", "change_rejected", memory.activeView, [])
 
     def _submit_pending_change(self, conversation_id, pending, reason):
         memory = self.memories.get_or_create(conversation_id)
@@ -539,18 +553,39 @@ class AgentRuntime:
             self.memories.apply_patch(latest, {"activeFilters": filters})
 
     def _confirm_yx(self, conversation_id, pending, memory, sink):
-        engine = self._yx_engine(conversation_id)
         content = str(pending.get("sourcePrompt") or "")
+        if self.jobs is None or self.job_pool is None:
+            # 没有求解任务仓库（测试/降级）：同步求解
+            return self._yx_run_sync(conversation_id, content, memory, sink)
+        # 后台异步求解：建任务 → 丢线程池 → 立即返回，前端轮询进度
+        job = self.jobs.create(conversation_id, {"kind": "yx", "message": content}, "")
+        self._futures[job.id] = self.job_pool.submit(
+            self._execute_job, job.id, conversation_id, content
+        )
+        return self._finalize_response(
+            conversation_id,
+            f"真实 CP-SAT 求解已启动，正在后台跑（任务 {job.id}）。算完会自动出方案卡。",
+            "solve_started", "P01", [],
+            solve_evidence=SolveEvidencePayload(status="UNKNOWN", running=True, phase="queued"),
+            solve_job=SolveJobPayload(**job.model_dump()),
+        )
+
+    def _yx_run_sync(self, conversation_id, content, memory, sink, solve_job_id=None):
+        engine = self._yx_engine(conversation_id)
         if sink:
             sink.stage("solve", "CP-SAT 求解", "running")
         try:
-            result = engine.run(seconds=60)
+            result = engine.run()
         except Exception as exc:  # noqa: BLE001
             return self._finalize_response(conversation_id, f"求解没成功：{exc}", "solve_failed", memory.activeView, [])
         if sink:
             sink.stage("solve", "CP-SAT 求解", "done")
+        return self._yx_build_reply(conversation_id, content, memory, result, solve_job_id=solve_job_id)
+
+    def _yx_build_reply(self, conversation_id, content, memory, result, solve_job_id=None):
+        engine = self._yx_engine(conversation_id)
         version_id = f"ver_{uuid4().hex[:8]}"
-        version = engine.build_version(conversation_id, content, result, version_id)
+        version = engine.build_version(conversation_id, content, result, version_id, solve_job_id=solve_job_id)
         self.versions.add(version)
         if self.candidates is not None:
             self.candidates.replace_for_version(conversation_id, version.id, version.windows)
@@ -565,7 +600,36 @@ class AgentRuntime:
         return self._finalize_response(
             conversation_id, body, "solve_completed", "P01", [version],
             solve_evidence=self._product_solve_evidence(result, version.modelFingerprint or "", status),
+            solve_job_id=solve_job_id,
         )
+
+    def _execute_job(self, job_id, conversation_id, content):
+        engine = self._yx_engine(conversation_id)
+        if self.jobs:
+            self.jobs.mark_running(job_id)
+        try:
+            result = engine.run()
+        except Exception as exc:  # noqa: BLE001
+            if self.jobs:
+                self.jobs.mark_failed(job_id, str(exc))
+            self._finalize_response(conversation_id, f"求解任务执行失败：{exc}", "solve_failed", "P01", [])
+            return
+        if self.jobs:
+            self.jobs.mark_reviewing(job_id)
+        memory = self.memories.get_or_create(conversation_id)
+        resp = self._yx_build_reply(conversation_id, content, memory, result, solve_job_id=job_id)
+        info = result.get("求解") or {}
+        status = info.get("解状态") or "UNKNOWN"
+        body = resp.assistantMessage.content
+        stored_result = {"versionId": resp.newVersions[0].id if resp.newVersions else None, "summary": {}}
+        if resp.newVersions:
+            stored_result["summary"] = resp.newVersions[0].resultSummary
+        if self.jobs:
+            self.jobs.mark_completed(
+                job_id, stored_result, status,
+                has_incumbent=bool(info.get("有解")),
+                status_message=str(body).strip()[:300],
+            )
 
     def _yx_solve(self, conversation_id: str, content: str, memory, sink):
         engine = self._yx_engine(conversation_id)
@@ -593,7 +657,7 @@ class AgentRuntime:
         if sink:
             sink.stage("solve", "CP-SAT 求解", "running")
         try:
-            result = engine.run(seconds=60)
+            result = engine.run()
         except Exception as exc:  # noqa: BLE001
             text = "\n".join(f"- {line}" for line in echo) + f"\n\n- 求解没成功：{exc}"
             return self._finalize_response(conversation_id, text, "solve_failed", memory.activeView, [])
