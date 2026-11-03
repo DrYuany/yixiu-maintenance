@@ -46,7 +46,11 @@ def _chat(system: str, user: str, *, timeout: float = 90.0, temperature: float =
     if not key:
         raise LLMUnavailable("未配置 DEEPSEEK_API_KEY（也可用 MINIMAX_API_KEY）")
     base = (os.environ.get("DEEPSEEK_BASE_URL") or DEFAULT_BASE).rstrip("/")
-    model = os.environ.get("DEEPSEEK_MODEL") or DEFAULT_MODEL
+    # 模型名与后端对齐：后端用 MINIMAX_MODEL（本账号配 deepseek-flash），
+    # yxcore 原来只认 DEEPSEEK_MODEL，没配时默认落到 deepseek-chat，与后端不一致。
+    model = (os.environ.get("DEEPSEEK_MODEL")
+             or os.environ.get("MINIMAX_MODEL")
+             or DEFAULT_MODEL)
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
