@@ -347,15 +347,10 @@
         "utterance": "现金不超200万"
       },
       {
-        "slot": "weight",
-        "index": {
-          "量": {
-            "kind": "metric",
-            "value": "高严重完成数"
-          }
-        },
-        "value": 2,
-        "utterance": "高危优先"
+        "slot": "strategy",
+        "value": "高风险优先抢修",
+        "utterance": "高危优先",
+        "op": "="
       }
     ],
     "期望": "通过",

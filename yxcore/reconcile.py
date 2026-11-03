@@ -302,15 +302,6 @@ def _reconcile_strategy(patch: Patch, ctx: Ctx) -> tuple[str, str]:
     return APPLIED, f"目标策略按「{used}」求解（单份产物证明不了最优，只能证明策略生效）"
 
 
-def _reconcile_weight(patch: Patch, ctx: Ctx) -> tuple[str, str]:
-    metric = patch.index.get("量", {}).get("value")
-    weights = ctx.info.get("权重") or (ctx.request.weights if ctx.request else {})
-    if metric in weights:
-        return APPLIED, (f"目标里带了 {metric} 的权重 {weights[metric]}"
-                         "（软偏好；单份产物证明不了最优，只能证明权重生效）")
-    return UNCHECKED, f"权重 {metric} 没有进到目标里，无法核对"
-
-
 def _reconcile_partial(patch: Patch, ctx: Ctx) -> tuple[str, str]:
     total = len(ctx.data.tasks)
     done = len(ctx.selected)
@@ -320,7 +311,6 @@ def _reconcile_partial(patch: Patch, ctx: Ctx) -> tuple[str, str]:
 
 RECONCILERS: dict[str, Callable[[Patch, Ctx], tuple[str, str]]] = {
     "reconcile_strategy": _reconcile_strategy,
-    "reconcile_weight": _reconcile_weight,
     "reconcile_count": _reconcile_count,
     "reconcile_bucket": _reconcile_bucket,
     "reconcile_earliest": _reconcile_earliest,

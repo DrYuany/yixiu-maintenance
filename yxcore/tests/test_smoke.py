@@ -44,10 +44,10 @@ def test_registry_self_check():
 
 
 def test_slot_count_matches_constitution():
-    """38 个可写槽位 = 22 个约束族 + 16 个标量参数（含 allow_partial）。"""
-    assert len(S.SLOTS) == 23
+    """37 个可写槽位 = 22 个约束族 + 15 个标量参数。"""
+    assert len(S.SLOTS) == 22
     assert len(S.PARAM_SLOTS) == 15
-    assert len(S.SLOTS) + len(S.PARAM_SLOTS) == 38
+    assert len(S.SLOTS) + len(S.PARAM_SLOTS) == 37
 
 
 def test_every_slot_has_route_and_reconcile():

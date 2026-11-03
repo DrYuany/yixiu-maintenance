@@ -99,7 +99,7 @@ def _check_value(patch: Patch, slot: S.Slot, data) -> list[str]:
             errors.append(f"{slot.label}：需要 是/否，收到 {value!r}")
         return errors
     if slot.value_type == "enum":
-        allowed = S.METRIC_NAMES if patch.slot == "weight" else S.STRATEGY_NAMES
+        allowed = S.STRATEGY_NAMES
         if value not in allowed:
             errors.append(f"{slot.label}：{value!r} 不在可选项里，能填的是：{'、'.join(allowed)}")
         return errors
@@ -157,9 +157,6 @@ def _check_index(data, patch: Patch, slot: S.Slot) -> list[str]:
             else:
                 missing = [v for v in ids if entities.resolve_task(data, str(v)) is None]
                 error = f"任务 {missing} 不在告警快照里" if missing else None
-        elif kind == "metric":
-            error = None if spec.get("value") in S.METRIC_NAMES else \
-                f"目标量 {spec.get('value')!r} 未登记"
         elif kind == "severity_pair":
             pair = spec.get("value")
             error = None if (isinstance(pair, (list, tuple)) and len(pair) == 2
@@ -411,12 +408,6 @@ def validate(
         if hint:
             warnings.append(hint)
 
-    # 硬软同现：同一批任务既有硬排序又有软权重
-    hard_sort = any(p.slot in ("sev_before", "before_seq") for p in patches)
-    soft_weight = any(p.slot == "weight" for p in patches)
-    if hard_sort and soft_weight:
-        warnings.append("同时给了「硬性先后顺序」和「软性权重」两个旋钮，"
-                        "两者会一起生效；若只是想让高危排前面，只留权重即可")
     unsure = [p for p in patches if p.strength == "unsure"]
     if unsure:
         warnings.append("这些话的强度没判准，需要向用户确认：" +

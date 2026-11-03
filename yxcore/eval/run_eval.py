@@ -147,9 +147,7 @@ def canonical(patch: Patch, data) -> tuple:
         # 用户说的是「19号」，不是「19号零点还是19号23:59」。gold 里这两种写法都有
         # （同一个意思，写的人不同），判分只比到「哪一天」，不替用户发明分钟精度。
         value = value[:10]
-    if patch.slot == "weight":
-        value = None  # 权重刻度是任意正数，只比「点了哪个量」
-    elif isinstance(value, bool):
+    if isinstance(value, bool):
         pass
     elif isinstance(value, (int, float)):
         value = round(float(value), 6)
@@ -212,8 +210,8 @@ def run_e2_online(*, seconds: float = 90.0) -> tuple[list[str], list[str]]:
         # 槽位/索引/值都对，再看强度：unsure 算过慎不算错（按 D3，拿不准要问人）
         got_strength = {p.slot: p.strength for p in patches}
         want_strength = {p.slot: p.strength for p in gold_patches(case)}
-        # 目标类（策略/权重）没有「硬约束」这回事：它就是偏好，不比强度
-        objective = {name for name, s in S.SLOTS.items() if s.route in ("strategy", "weights")}
+        # 目标类（策略）没有「硬约束」这回事：它就是偏好，不比强度
+        objective = {name for name, s in S.SLOTS.items() if s.route == "strategy"}
         for slot in list(want_strength):
             if slot in objective:
                 want_strength.pop(slot)

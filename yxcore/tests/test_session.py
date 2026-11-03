@@ -183,10 +183,10 @@ def test_索引裸字符串在解析层就被挡下():
     assert patch is None
     assert "要说清是哪一类" in error and "kind" in error
     # 单类别维度写裸值是**能**归一的（注册表里那一维只有一种 kind，不是猜）
-    ok, err = parse_patch({"slot": "weight", "op": "=", "value": 2,
-                           "index": {"量": "高严重完成数"}})
+    ok, err = parse_patch({"slot": "budget_max", "op": "=", "value": 100,
+                           "index": {"口径": "现金"}})
     assert err is None
-    assert normalize_patch(ok).index["量"]["kind"] == "metric"
+    assert normalize_patch(ok).index["口径"]["kind"] == "budget_口径"
 
 
 def test_回显带错误():
@@ -272,11 +272,10 @@ def test_时刻型回显说日期不说ISO串(data):
 
 def test_reset带值照样撤_值丢掉(data):
     """模型照抄上一条只把 op 改成 reset，值也带过来——别为这个把整句打回去。"""
-    p, error = parse_patch({"slot": "weight", "op": "reset", "value": 3,
-                            "index": {"量": {"kind": "metric", "value": "现金支出"}}})
+    p, error = parse_patch({"slot": "strategy", "op": "reset", "value": "成本最低优先"})
     assert error is None and p.value is None
     s = Session(data)
-    s.apply([P(slot="weight", value=3, index={"量": {"kind": "metric", "value": "现金支出"}})])
+    s.apply([P(slot="strategy", value="成本最低优先")])
     turn = s.apply([p])
     assert len(turn.撤销) == 1 and s.state == {}
 

@@ -834,15 +834,13 @@ class AgentToolbox:
         from yxcore.prompt import _slot_lines, _disambiguation, _boundary_text
 
         head = (
-            "strategy 四选一：" + "、".join(S.STRATEGY_NAMES) + "\n"
-            "weight 的 14 个量：" + "、".join(S.METRIC_NAMES)
+            "strategy 四选一：" + "、".join(S.STRATEGY_NAMES)
         )
         markdown = "\n\n".join([head, _slot_lines(), _disambiguation(), _boundary_text()])
         return self._envelope(
             "ok",
             {
                 "strategies": list(S.STRATEGY_NAMES),
-                "weightedMetrics": list(S.METRIC_NAMES),
                 "markdown": markdown,
                 "verbatim": True,
             },

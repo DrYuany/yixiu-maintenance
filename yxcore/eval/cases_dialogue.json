@@ -231,14 +231,9 @@
       "校验": "通过",
       "补丁": [
         {
-          "slot": "weight",
-          "value": 5,
-          "index": {
-            "量": {
-              "kind": "metric",
-              "value": "高严重完成数"
-            }
-          }
+          "slot": "strategy",
+          "value": "高风险优先抢修",
+          "op": "="
         }
       ]
     }

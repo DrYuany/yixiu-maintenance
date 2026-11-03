@@ -374,16 +374,9 @@
     "名": "高危优先（软权重）",
     "补丁": [
       {
-        "slot": "weight",
+        "slot": "strategy",
         "op": "=",
-        "value": 3,
-        "strength": "soft",
-        "index": {
-          "量": {
-            "kind": "metric",
-            "value": "高严重完成数"
-          }
-        },
+        "value": "高风险优先抢修",
         "utterance": "高危优先"
       }
     ],

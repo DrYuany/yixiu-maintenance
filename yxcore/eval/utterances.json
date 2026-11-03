@@ -134,16 +134,9 @@
   "话术": "高危优先",
   "期望": [
    {
-    "slot": "weight",
-    "index": {
-     "量": {
-      "kind": "metric",
-      "value": "高严重完成数"
-     }
-    },
+    "slot": "strategy",
     "op": "=",
-    "value": 3,
-    "strength": "soft"
+    "value": "高风险优先抢修"
    }
   ],
   "注": "软偏好，不是硬性要求；落硬槽位会把「尽量」做成「必须」"
@@ -152,16 +145,9 @@
   "话术": "尽量压租船天数",
   "期望": [
    {
-    "slot": "weight",
-    "index": {
-     "量": {
-      "kind": "metric",
-      "value": "船舶艘天"
-     }
-    },
+    "slot": "strategy",
     "op": "=",
-    "value": 3,
-    "strength": "soft"
+    "value": "成本最低优先"
    }
   ]
  },
@@ -169,43 +155,22 @@
   "话术": "省钱比赶时间重要",
   "期望": [
    {
-    "slot": "weight",
-    "index": {
-     "量": {
-      "kind": "metric",
-      "value": "总经济成本"
-     }
-    },
+    "slot": "strategy",
     "op": "=",
-    "value": 3,
-    "strength": "soft"
+    "value": "成本最低优先"
    }
   ],
   "期望或": [
    [
     {
-     "slot": "weight",
-     "index": {
-      "量": {
-       "kind": "metric",
-       "value": "总经济成本"
-      }
-     },
+     "slot": "strategy",
      "op": "=",
-     "value": 3,
-     "strength": "soft"
+     "value": "成本最低优先"
     },
     {
-     "slot": "weight",
-     "index": {
-      "量": {
-       "kind": "metric",
-       "value": "最后完工时间"
-      }
-     },
+     "slot": "strategy",
      "op": "=",
-     "value": 3,
-     "strength": "soft"
+     "value": "最短完成优先"
     }
    ]
   ],
@@ -274,16 +239,9 @@
   "话术": "尽量把高危都修了",
   "期望": [
    {
-    "slot": "weight",
-    "index": {
-     "量": {
-      "kind": "metric",
-      "value": "高严重完成数"
-     }
-    },
+    "slot": "strategy",
     "op": "=",
-    "value": 3,
-    "strength": "soft"
+    "value": "高风险优先抢修"
    }
   ],
   "注": "硬软对照的软侧：尽量=权重"
@@ -2150,15 +2108,9 @@
   "注": "软偏好 + 硬计数同现（D3：回显不报错）",
   "期望": [
    {
-    "slot": "weight",
-    "index": {
-     "量": {
-      "kind": "metric",
-      "value": "高严重完成数"
-     }
-    },
+    "slot": "strategy",
     "op": "=",
-    "value": 3
+    "value": "高风险优先抢修"
    },
    {
     "slot": "count_min",

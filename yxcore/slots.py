@@ -186,15 +186,8 @@ SLOTS: dict[str, Slot] = {
         reconcile="reconcile_strategy",
         examples=("按成本最低排", "整体按高风险抢修的思路排", "越早干完越好", "尽量多修几个"),
         note="只在用户要**整体切换排程风格**时用它（四选一）。"
-             "「高危优先」「先保高严重」这类只点了一个偏好量的，落 weight（软），不要动 strategy",
-    ),
-    "weight": Slot(
-        name="weight", group="B", label="目标权重", route="weights",
-        index=(("量", "metric"),), default=0, default_note="0，即该量不参与权衡",
-        value_type="float", bounds=(0, 1e6), consumption="model", strength="soft",
-        reconcile="reconcile_weight",
-        examples=("高危优先", "省钱比赶时间重要", "尽量压租船天数"),
-        note="软偏好通道。用户说「必须/不许」时不要落这里（见 README 第六节硬软消歧）",
+             "「高危优先」「先保高严重」「严重优先」「成本最低优先」这类**都是整体风格**，"
+             "命中哪个就落哪个 strategy（如「高危优先」→高风险优先抢修），不要拆成别的旋钮",
     ),
     # C 组 · 修多少
     "count_min": Slot(
@@ -575,11 +568,9 @@ def describe_patch(patch, data=None, *, show_value: bool = True) -> str:
             return f"参数 {patch.slot} = {patch.value} {spec['单位']}".strip()
         return f"{patch.slot} = {patch.value}"
 
-    # 目标类：策略与权重没有「值」的强弱，说清点了哪个量就够
+    # 目标类：策略没有「值」的强弱，说清选了哪个风格就够
     if patch.slot == "strategy":
         return f"整体排程风格按「{patch.value}」"
-    if patch.slot == "weight":
-        return f"「{patch.index.get('量', {}).get('value')}」参与权衡（权重 {patch.value}）"
 
     cells: list[str] = []
     index = patch.index or {}

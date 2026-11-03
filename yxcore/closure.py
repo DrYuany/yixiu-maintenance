@@ -322,7 +322,7 @@ COMPILERS: dict[str, Callable[[Any, _Ctx], None]] = {
 
 # 走数据补丁 / 参数 / 目标 / 部分的槽位不进闭包
 NON_CLOSURE = {"deadline_delta", "part_hours", "part_arrival", "weather", "hourly", "window",
-               "strategy", "weight", "allow_partial"}
+               "strategy", "allow_partial"}
 
 
 def build_closure(patches, data) -> Callable | None:

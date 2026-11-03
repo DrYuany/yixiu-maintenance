@@ -127,7 +127,6 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
     """编译。返回 (请求, 错误)；错误不为空就不该往下走。"""
     request = CompiledRequest()
     errors: list[str] = []
-    weights: dict[str, float] = {}
     must_do: list[str] = []
 
     for patch in patches:
@@ -142,8 +141,6 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
         if patch.slot in S.PARAM_SLOTS:
             key = S.PARAM_ALIASES[patch.slot]
             baseline = getattr(base_data, "params", {}).get(key) if base_data is not None else None
-        elif patch.slot == "weight":
-            baseline = 0.0
         value, error = absolute_value(patch.op, patch.value, baseline)
         if error:
             errors.append(f"{patch.slot}：{error}")
@@ -171,15 +168,6 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
             request.strategy = str(value)
             request.mode = request.mode or "分层"
             request.echo.append(f"目标策略按「{value}」")
-            continue
-        if patch.slot == "weight":
-            metric = patch.index.get("量", {}).get("value")
-            if metric not in S.METRIC_NAMES:
-                errors.append(f"weight：目标量 {metric!r} 未登记")
-                continue
-            if float(value) > 0:
-                weights[metric] = float(value)
-                request.echo.append(f"给「{metric}」加了权重 {value}（软偏好，不是硬性要求）")
             continue
 
         # ── G 组预算：现金/总成本走内核 limits ──
@@ -318,9 +306,6 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
             + (f"[{cells}]" if cells else "")
             + f" = {value}（{strength_word}）")
 
-    if weights:
-        request.weights = weights
-        request.mode = "加权"
     if must_do:
         request.limits.setdefault("必修任务", []).extend(must_do)
     request.closure = build_closure(patches, data)

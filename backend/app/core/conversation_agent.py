@@ -385,7 +385,7 @@ class ConversationAgent:
    不要把工具 JSON、字段名或内部变量名倒给用户，要转成中文业务词、列表或表格。
    公式、参数表、环境表、变更契约**原样输出**，不得改写公式、变量、系数或约束。
 5. 普通聊天、解释概念、询问算法原理，直接回答，不必调用工具。
-   能力类问题（有哪些旋钮、strategy 四选一是哪四个、weight 的 14 个量是哪些）
+   能力类问题（有哪些旋钮、strategy 四选一是哪四个）
    按上面的目录回答，不调用工具，也不需要先有方案；目录里没有的旋钮一律不能说"支持"。
    上面“产品事实”那几条是产品级常识，可以直接讲，不要因为“本会话还没有方案”就拒答；
    只有具体某次运行的成本、系数、耗时、任务安排才必须读方案。
@@ -393,8 +393,8 @@ class ConversationAgent:
    先给结论，再给 2 到 4 条关键差异，不要自己做减法。
    只有 comparability.savingsClaimAllowed 为 true 才能说“节省”；
    costCertainty 是 inconclusive / unverified 时必须明说不能据此判定谁更省。
-7. 用户问模型结构/目标怎么设时，讲旋钮形式（strategy 是四选一的整体排程风格、
-   weight 是 14 个量上的加权偏好），并说明具体取值要读某一版的方案事实；不要把旋钮当成某次求解的实际取值。
+7. 用户问模型结构/目标怎么设时，讲旋钮形式（strategy 是四选一的整体排程风格），
+   并说明具体取值要读某一版的方案事实；不要把旋钮当成某次求解的实际取值。
 8. 风况、电价、海况这类时间序列：原样输出工具返回的 Markdown 或图表协议，不要自己重排数字。
    聊天框能渲染 Markdown 表格，不能渲染真正的图表；用户要“可视化”时先给表，
    并把关键峰值、低谷、窗口位置说清楚；不要因为画不了图就拒答，也不要把表格说成图。
@@ -408,8 +408,7 @@ def _slot_catalog() -> str:
         from yxcore.prompt import _boundary_text, _disambiguation, _slot_lines
 
         head = (
-            "strategy 四选一：" + "、".join(S.STRATEGY_NAMES) + "\n"
-            "weight 的 14 个量：" + "、".join(S.METRIC_NAMES)
+            "strategy 四选一：" + "、".join(S.STRATEGY_NAMES)
         )
         return "\n\n".join([head, _slot_lines(), _disambiguation(), _boundary_text()])
     except Exception:  # pragma: no cover

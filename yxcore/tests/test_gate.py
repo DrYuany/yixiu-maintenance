@@ -66,11 +66,10 @@ def test_objective_is_applied_not_passed():
 
     modules = solver_modules()
     data = modules["load_project"](PROJECT_ROOT, base_id="基座01")
-    patch = P(slot="weight", op="=", value=3, strength="soft", utterance="高危优先",
-              index={"量": {"kind": "metric", "value": "高严重完成数"}})
+    patch = P(slot="strategy", op="=", value="高风险优先抢修", strength="soft", utterance="高危优先")
     request, _ = compile_patches([patch], data, data)
     audit = reconcile([patch], Ctx(selected=[], rec={}, data=data, base_data=data,
-                                   info={"权重": request.weights}, request=request))
+                                   info={"策略": request.strategy}, request=request))
     item = audit["明细"][0]
     assert item["结果"] == "已生效"
     assert "证明不了最优" in item["说明"]

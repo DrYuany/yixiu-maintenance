@@ -149,7 +149,6 @@ def _unique_enum(value: Any, allowed: tuple[str, ...]) -> Any:
 
 
 _ENUM_KINDS = {
-    "metric": None,          # 运行时取 METRIC_NAMES
     "strategy": None,        # 运行时取 STRATEGY_NAMES
     "severity": ("高", "中", "低"),
     "sea": ("常态", "恶劣但安全"),
@@ -231,7 +230,7 @@ def normalize_patch(patch: "Patch") -> "Patch":
         if kind in _ENUM_KINDS:
             allowed = _ENUM_KINDS[kind]
             if allowed is None:
-                allowed = {"metric": S.METRIC_NAMES, "strategy": S.STRATEGY_NAMES,
+                allowed = {"strategy": S.STRATEGY_NAMES,
                            "cap_维度": S.CAP_DIMENSIONS, "budget_口径": S.BUDGET_KINDS}[kind]
             value = _unique_enum(value, allowed)
         spec["value"] = value

@@ -13,11 +13,6 @@ ModelQuestionKind = Literal[
 _CAPABILITY_TOKENS = (
     "有哪些目标",
     "哪些目标函数",
-    "可以设置权重",
-    "能设置权重",
-    "怎么设置权重",
-    "如何设置权重",
-    "权重怎么设",
     "有哪些指标",
     "支持哪些指标",
     "有哪些策略",
@@ -29,7 +24,6 @@ _CAPABILITY_TOKENS = (
     "可以调什么",
     "能改什么",
     "可以改什么",
-    "默认权重",
 )
 
 _STRUCTURE_TOKENS = (
@@ -337,8 +331,7 @@ def render_capability_answer() -> str:
     from yxcore import slots as S
 
     head = (
-        "strategy 四选一：" + "、".join(S.STRATEGY_NAMES) + "\n"
-        "weight 的 14 个量：" + "、".join(S.METRIC_NAMES)
+        "strategy 四选一：" + "、".join(S.STRATEGY_NAMES)
     )
     from yxcore.prompt import _slot_lines, _boundary_text
 

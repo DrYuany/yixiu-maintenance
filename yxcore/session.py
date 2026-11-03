@@ -94,11 +94,9 @@ class Session:
 
     # ── 落地 ────────────────────────────────────────────────────────────
     def _baseline(self, patch: Patch) -> float | None:
-        """这一格的基线值：参数读快照，权重从 0 起，其余没有基线。"""
+        """这一格的基线值：参数读快照，其余没有基线。"""
         if patch.slot in S.PARAM_SLOTS and self.base_data is not None:
             return self.base_data.params.get(S.PARAM_ALIASES[patch.slot])
-        if patch.slot == "weight":
-            return 0.0
         return None
 
     def _absolute(self, patch: Patch) -> tuple[Patch, str | None]:

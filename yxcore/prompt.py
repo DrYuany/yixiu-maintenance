@@ -143,7 +143,6 @@ def _slot_lines() -> str:
         if group == "B":
             # 枚举值必须印出来：不印模型就只能照话术自己编名字
             lines.append("  strategy 只能填这四个之一：" + "、".join(S.STRATEGY_NAMES))
-            lines.append("  weight 的「量」只能填这 14 个之一：" + "、".join(S.METRIC_NAMES))
         lines.append("")
     return "\n".join(lines)
 
@@ -158,12 +157,14 @@ def _disambiguation() -> str:
         "2. 「只许」vs「不许」：",
         "   * 「只修叶片」「只在窗口03 干」——只留它、其余都不要 → scope_only",
         "   * 「窗口01 不修齿轮箱」「16号别排 2 号船」——只禁它、其余随意 → bucket_max（值 0）",
-        "3. strategy vs weight：",
-        "   * 这四句是内置策略的**典型说法**，命中就落 strategy，不要拆成 weight："
+        "3. strategy（目标只能落这里）：",
+        "   * 目标类只有一个旋钮 strategy，四选一："
         "「按成本最低排」→成本最低优先；「整体按高风险抢修」→高风险优先抢修；"
         "「越早干完越好」→最短完成优先；「尽量多修几个」→检修最多器件优先",
-        "   * strategy 是**整体**排程风格四选一，用户说「按成本最低排」「越早干完越好」这类才动它",
-        "   * 「高危优先」「省钱更要紧」「尽量压租船天数」只点了**一个偏好量** → weight（软），不要动 strategy",
+        "   * 「高危优先」「先保高严重」「严重优先」也是整体风格，落 strategy（=高风险优先抢修），"
+        "不要拆成别的旋钮",
+        "   * 用户要「按经济优先和严重性优先分别排然后对比」这类一句话多个方案，"
+        "不要硬塞成一个 strategy——那是复合需求，报 unsure 让用户拆成两轮",
         "4. 点名实例 vs 数量上限（最容易落错的一对）：",
         "   * cap_max 的「维度」只能填这三类**名字**：作业线 / 风机 / 部件，不是编号。"
         "cap_max[维度=作业线, 桶=某日]=2 的意思是「这天最多占用 2 条船」，跟「2 号船」无关",
@@ -179,7 +180,6 @@ def _boundary_text() -> str:
              "硬凑出来的东西对不上用户的话，比明确拒绝更危险："]
     for name, example in BOUNDARY:
         lines.append(f"* {name}：{example}")
-    lines.append("拿权重去近似均衡也算糊弄，同样不许做。")
     return "\n".join(lines)
 
 
