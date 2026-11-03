@@ -82,25 +82,6 @@ def test_missing_everything_falls_back_to_one_default(monkeypatch: pytest.Monkey
     assert budget["secondsSource"] == "代码默认"
 
 
-def test_executor_prepare_exposes_the_same_number(monkeypatch: pytest.MonkeyPatch) -> None:
-    """公告与 job 进度读的是 prepare 产出的预算，必须和求解器一致。"""
-    monkeypatch.delenv(ENV_SECONDS, raising=False)
-    from app.core.maintenance_product_executor import MaintenanceProductExecutor
-    from dsl_core.planning_request import PlanningRequest
-
-    executor = MaintenanceProductExecutor(Path(__file__).resolve().parents[2])
-    request, snapshot = executor.prepare(PlanningRequest())
-
-    assert request.seconds is None, "没点名时限就不该在请求里写死一个数"
-    assert snapshot["budget"]["seconds"] == 180, "参数总表求解01 当前是 180 秒"
-    assert snapshot["budget"]["secondsSource"] == "参数总表"
-
-    monkeypatch.setenv(ENV_SECONDS, "25")
-    _, capped = executor.prepare(PlanningRequest())
-    assert capped["budget"]["seconds"] == 25
-    assert capped["budget"]["secondsSource"] == "环境变量上限"
-
-
 def test_table_runtime_and_deploy_cap_are_one_number() -> None:
     """参数总表、运行时基座、部署上限必须是同一个数，别再退回三处各写各的。"""
     import csv

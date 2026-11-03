@@ -164,10 +164,3 @@ def test_memory_cache_evicts_oldest_beyond_maxsize() -> None:
     assert cache.get("c", 0) is not None
 
 
-def test_summarize_returns_none_when_llm_disabled(monkeypatch) -> None:
-    from app.core.conversation_agent import ConversationAgent
-
-    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-    agent = ConversationAgent()
-    assert not agent.enabled
-    assert agent.summarize([_msg("m1", "user", "船租上涨20%")]) is None

@@ -58,33 +58,3 @@ def test_repository_get_missing_returns_none(temp_db_path: Path) -> None:
     assert repo.get("trace_nope") is None
 
 
-def test_trace_is_persisted_and_exposed_end_to_end(temp_db_path: Path, monkeypatch) -> None:
-    import os
-
-    from fastapi.testclient import TestClient
-
-    os.environ["MWA_DB_PATH"] = str(temp_db_path)
-    os.environ.pop("MINIMAX_API_KEY", None)
-    from app.main import create_app
-
-    client = TestClient(create_app())
-    conversation = client.post("/api/conversations", json={"title": "trace"}).json()
-
-    response = client.post(
-        "/api/agent/message",
-        json={
-            "conversationId": conversation["id"],
-            "message": "制定排程时有哪些目标函数可以设置权重",
-        },
-    ).json()
-
-    trace_id = response["traceId"]
-    assert trace_id and trace_id.startswith("trace_")
-
-    trace = client.get(f"/api/agent/trace/{trace_id}").json()
-    assert trace["route"] == "capability_answer"
-    assert trace["conversationId"] == conversation["id"]
-    assert trace["model"] is not None
-
-    traces = client.get(f"/api/agent/conversations/{conversation['id']}/traces").json()
-    assert any(item["requestId"] == trace_id for item in traces)

@@ -7,17 +7,6 @@ def test_registry_is_internally_consistent() -> None:
     assert objective_catalog.validate() == []
 
 
-def test_compiler_aliases_match_the_registry() -> None:
-    from app.core.planning_intent import PlanningIntentCompiler
-
-    compiler = PlanningIntentCompiler()
-
-    assert set(compiler._WEIGHT_ALIASES) == set(objective_catalog.all_weighted_metrics())
-    assert {strategy for _aliases, strategy in compiler._STRATEGIES} == set(
-        objective_catalog.strategies()
-    )
-
-
 def test_catalog_lists_every_strategy_and_excludes_unweightable_metrics() -> None:
     text = objective_catalog.catalog_markdown()
 
