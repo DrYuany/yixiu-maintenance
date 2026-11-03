@@ -200,7 +200,7 @@ class AgentRuntime:
         self.normalizer = normalizer
         self.version_manager = version_manager
         self.jobs = jobs
-        self.job_pool = job_pool or ThreadPoolExecutor(max_workers=2, thread_name_prefix="maintenance-solve")
+        self.job_pool = job_pool or ThreadPoolExecutor(max_workers=4, thread_name_prefix="maintenance-solve")
         self._futures: dict[str, Future] = {}
         self.conversation_agent = conversation_agent or ConversationAgent()
         self.traces = traces
@@ -212,6 +212,7 @@ class AgentRuntime:
         self._tls = threading.local()
         # 小一修槽位引擎：每个会话一张旋钮表。与一修唯一的分叉点——理解层。
         self._yx_engines: dict[str, YxEngine] = {}
+        self._batch_lock = threading.Lock()
 
     # ── trace ────────────────────────────────────────────────────────────────
 
@@ -488,8 +489,29 @@ class AgentRuntime:
         if compare_reply is not None:
             return self._finalize_response(conversation_id, compare_reply, "version_compare", memory.activeView, [])
 
-        # 2. 改排程优先：yxcore 槽位翻译（可靠、确定性填槽）。翻不出旋钮（=不是排程约束）→ LLM 问答。
+        # 1.5 复合需求：分别按 N 种目标/策略排然后对比 → 批量预览 → 确认后并发求解
         engine = self._yx_engine(conversation_id)
+        if any(k in content for k in ("分别", "对比", "两种", "两套", "各排", "几个方案", "多个方案")):
+            try:
+                scenarios = engine.say_scenarios(content, timeout=90)
+            except Exception:  # noqa: BLE001
+                scenarios = None
+            if scenarios:
+                labels = [str(sc.get("标签") or f"方案{i+1}") for i, sc in enumerate(scenarios)]
+                preview = ("将按这些方案分别排：\n" + "\n".join(f"- {lab}" for lab in labels)
+                           + "\n\n确认后并发求解，全部算完再对比。")
+                payload = {
+                    "kind": "batch",
+                    "scenarios": [
+                        {"标签": lab, "patches": [p.to_json() for p in sc["patches"]]}
+                        for lab, sc in zip(labels, scenarios)
+                    ],
+                    "sourcePrompt": content,
+                }
+                self._persist_agent_pending(conversation_id, payload)
+                return self._finalize_response(conversation_id, preview, "batch_preview", memory.activeView, [])
+
+        # 2. 改排程优先：yxcore 槽位翻译（可靠、确定性填槽）。翻不出旋钮（=不是排程约束）→ LLM 问答。
         try:
             turn = engine.say(content, timeout=90)
         except Exception:  # noqa: BLE001
@@ -576,6 +598,8 @@ class AgentRuntime:
             self.memories.apply_patch(latest, {"activeFilters": filters})
 
     def _start_planning_solve(self, conversation_id, pending, memory, sink):
+        if pending.get("kind") == "batch":
+            return self._start_batch_solve(conversation_id, pending, memory, sink)
         content = str(pending.get("sourcePrompt") or "")
         if self.jobs is None or self.job_pool is None:
             # 没有求解任务仓库（测试/降级）：同步求解
@@ -591,6 +615,152 @@ class AgentRuntime:
             "solve_started", "P01", [],
             solve_evidence=SolveEvidencePayload(status="UNKNOWN", running=True, phase="queued"),
             solve_job=SolveJobPayload(**job.model_dump()),
+        )
+
+    def _start_batch_solve(self, conversation_id, pending, memory, sink):
+        """复合需求：并发 fork N 个求解任务，全部算完后汇合对比。"""
+        scenarios = pending.get("scenarios") or []
+        labels = [str(sc.get("标签") or f"方案{i+1}") for i, sc in enumerate(scenarios)]
+        filters = dict(memory.activeFilters)
+        filters["pendingBatch"] = {"total": len(scenarios), "completed": [], "labels": labels}
+        self.memories.apply_patch(memory, {"activeFilters": filters})
+        if self.jobs is None or self.job_pool is None:
+            # 测试/降级：同步逐个跑，再对比
+            versions = []
+            for sc in scenarios:
+                version = self._run_batch_scenario_sync(conversation_id, sc)
+                if version is not None:
+                    versions.append(version)
+            if versions:
+                self._emit_batch_compare(conversation_id, [v.id for v in versions])
+            return self._finalize_response(conversation_id, "批量求解已完成。", "solve_completed", "P01", versions)
+        # 并发 fork：每个场景一个独立任务
+        for i, sc in enumerate(scenarios):
+            job = self.jobs.create(
+                conversation_id,
+                {"kind": "batch", "label": labels[i], "patches": sc.get("patches") or []},
+                "",
+            )
+            self._futures[job.id] = self.job_pool.submit(
+                self._execute_batch_job, job.id, conversation_id, labels[i], sc.get("patches") or []
+            )
+        return self._finalize_response(
+            conversation_id,
+            f"已并发启动 {len(scenarios)} 个求解任务，全部算完会自动出方案卡和对比。",
+            "solve_started", "P01", [],
+            solve_evidence=SolveEvidencePayload(status="UNKNOWN", running=True, phase="queued"),
+        )
+
+    def _run_batch_scenario_sync(self, conversation_id, scenario):
+        from yxcore.patch import parse_patch
+        engine = YxEngine()
+        patches = self._patches_from_payload(scenario.get("patches") or [])
+        turn = engine.session.apply(patches)
+        if turn.错误:
+            return None
+        try:
+            result = engine.run()
+        except Exception:  # noqa: BLE001
+            return None
+        version_id = f"ver_{uuid4().hex[:8]}"
+        version = engine.build_version(conversation_id, scenario.get("标签") or "", result, version_id)
+        self.versions.add(version)
+        if self.candidates is not None:
+            self.candidates.replace_for_version(conversation_id, version.id, version.windows)
+        return version
+
+    @staticmethod
+    def _patches_from_payload(raw_patches):
+        from yxcore.patch import normalize_patch, parse_patch
+        patches = []
+        for raw in raw_patches or []:
+            patch, error = parse_patch(raw)
+            if patch is None:
+                raise ValueError(error or "补丁反序列化失败")
+            patches.append(normalize_patch(patch))
+        return patches
+
+    def _execute_batch_job(self, job_id, conversation_id, label, raw_patches):
+        engine = YxEngine()
+        patches = self._patches_from_payload(raw_patches)
+        turn = engine.session.apply(patches)
+        if self.jobs:
+            self.jobs.mark_running(job_id)
+        if turn.错误:
+            if self.jobs:
+                self.jobs.mark_failed(job_id, "；".join(turn.错误))
+            self._batch_job_done(conversation_id, job_id, None)
+            return
+        try:
+            result = engine.run()
+        except Exception as exc:  # noqa: BLE001
+            if self.jobs:
+                self.jobs.mark_failed(job_id, str(exc))
+            self._batch_job_done(conversation_id, job_id, None)
+            return
+        version_id = f"ver_{uuid4().hex[:8]}"
+        version = engine.build_version(conversation_id, label, result, version_id, solve_job_id=job_id)
+        self.versions.add(version)
+        if self.candidates is not None:
+            self.candidates.replace_for_version(conversation_id, version.id, version.windows)
+        info = result.get("求解") or {}
+        status = info.get("解状态") or "UNKNOWN"
+        if self.jobs:
+            self.jobs.mark_completed(
+                job_id,
+                {"versionId": version.id, "summary": version.resultSummary},
+                status,
+                has_incumbent=bool(info.get("有解")),
+                status_message=f"方案「{label}」排程完成。",
+            )
+        self._batch_job_done(conversation_id, job_id, version)
+
+    def _batch_job_done(self, conversation_id, job_id, version):
+        """一个场景算完后推进批量；全部算完则汇合出对比。"""
+        with self._batch_lock:
+            memory = self.memories.get_or_create(conversation_id)
+            batch = (memory.activeFilters or {}).get("pendingBatch")
+            if not isinstance(batch, dict):
+                return
+            completed = list(batch.get("completed") or [])
+            if version is not None and version.id not in completed:
+                completed.append(version.id)
+            total = int(batch.get("total") or 0)
+            if len(completed) >= total:
+                filters = dict(memory.activeFilters)
+                filters.pop("pendingBatch", None)
+                self.memories.apply_patch(memory, {"activeFilters": filters})
+                self._emit_batch_compare(conversation_id, completed)
+            else:
+                filters = dict(memory.activeFilters)
+                filters["pendingBatch"] = {**batch, "completed": completed}
+                self.memories.apply_patch(memory, {"activeFilters": filters})
+
+    def _emit_batch_compare(self, conversation_id, version_ids):
+        """多个方案都算完了，直接出对比，不再多一次模型调用。"""
+        pairs: list[tuple] = []
+        unique: list[str] = []
+        for version_id in version_ids:
+            if version_id not in unique:
+                unique.append(version_id)
+        for index in range(len(unique) - 1):
+            left = self.versions.get(unique[index])
+            right = self.versions.get(unique[index + 1])
+            if left and right:
+                pairs.append((left, right))
+        if not pairs:
+            return
+        toolbox = self._build_toolbox(conversation_id, None, None)
+        blocks = []
+        for left, right in pairs:
+            blocks.append(render_compare_summary(toolbox.compare_pair(left, right)))
+        memory = self.memories.get_or_create(conversation_id)
+        self._finalize_response(
+            conversation_id,
+            f"这些方案都算完了，下面是它们的对比：\n\n" + "\n\n".join(blocks),
+            "batch_compare",
+            memory.activeView,
+            [item for pair in pairs for item in pair],
         )
 
     def _yx_run_sync(self, conversation_id, content, memory, sink, solve_job_id=None):

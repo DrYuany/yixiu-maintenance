@@ -159,6 +159,62 @@ def translate_and_validate(utterance: str, data, options: dict[str, list[dict]] 
     return patches, errors, warnings
 
 
+_COMPOUND_EXTRA = (
+    "本次是复合需求检测：这句话是不是「分别按几种目标/策略排方案，然后对比」？\n"
+    "- 是 → 输出 {\"scenarios\": [{\"标签\": \"方案名\", \"patches\": [...]}, ...]}，"
+    "每个 patches 是一套独立旋钮（每套各写一个 strategy）。\n"
+    "- 不是 → 输出 {\"scenarios\": null}。"
+)
+
+
+def translate_scenarios(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
+                        timeout: float = 90.0,
+                        session_text: str = "") -> list[dict] | None:
+    """识别「分别…对比」复合需求，返回 N 张场景；非复合返回 None。
+
+    场景形如 ``[{"标签": str, "patches": [Patch, ...]}, ...]``。
+    这是复合需求专用的翻译入口，与单场景 ``translate`` 分开：复合需求不是「一句填一张表」，
+    而是「一句点 N 套目标」，每套各是一张独立的旋钮表，求解时各跑一份、再对比。
+    """
+    from .prompt import build_prompt
+
+    system = build_prompt(data, options, extra=_COMPOUND_EXTRA, session_text=session_text)
+    user = "\n".join([
+        f"规划期：{data.stamp(0)[:10]} ~ {data.stamp(data.end)[:10]}",
+        f"当前时点：{data.stamp(data.now)}",
+        "",
+        "用户说的话：",
+        utterance,
+    ])
+    raw = _chat(system, user, timeout=timeout)
+    try:
+        payload = json.loads(_strip_fences(raw))
+    except json.JSONDecodeError as exc:
+        raise LLMUnavailable(f"大模型返回的不是 JSON：{raw[:200]}") from exc
+    if not isinstance(payload, dict):
+        raise LLMUnavailable(f"大模型返回的不是对象：{raw[:200]}")
+    scenarios = payload.get("scenarios") or payload.get("场景")
+    if not scenarios:
+        return None
+    result: list[dict] = []
+    for sc in scenarios:
+        if not isinstance(sc, dict):
+            continue
+        label = str(sc.get("标签") or sc.get("label") or sc.get("name") or "")
+        patches: list[Patch] = []
+        for item in sc.get("patches") or sc.get("补丁") or []:
+            if not isinstance(item, dict):
+                continue
+            item.setdefault("utterance", utterance)
+            patch, error = parse_patch(item)
+            if patch is None:
+                raise LLMUnavailable(error or "补丁解析失败")
+            patches.append(normalize_patch(patch))
+        if patches:
+            result.append({"标签": label, "patches": patches})
+    return result or None
+
+
 def self_check(data, options: dict[str, list[dict]] | None = None) -> dict[str, Any]:
     """给回归脚本用：提示词规模 + 是否配了 key。"""
     from .prompt import prompt_stats

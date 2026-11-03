@@ -49,6 +49,10 @@ class YxEngine:
         """翻译 + 落地一轮，返回 yxcore 的 Turn（含回显/错误/待确认）。"""
         return self.session.say(message, timeout=timeout)
 
+    def say_scenarios(self, message: str, timeout: float = 90.0):
+        """识别复合需求，返回 N 张场景；非复合返回 None。不改本会话状态。"""
+        return self.session.say_scenarios(message, timeout=timeout)
+
     def clear(self) -> None:
         self.session.clear()
 

@@ -304,6 +304,25 @@ class Session:
         """连续说几句（评测和回归用）。每轮都看得见上一轮的结果。"""
         return [self.say(text, timeout=timeout) for text in utterances]
 
+    def say_scenarios(self, utterance: str, data=None, options=None, *,
+                      timeout: float = 90.0) -> list[dict] | None:
+        """识别复合需求，返回 N 张场景 ``[{"标签": str, "patches": [Patch...]}, ...]``。
+
+        非复合返回 None。这一入口不改本会话的状态——场景只是「候选方案」，
+        真要跑得由编排层把它们各自落成独立的 Session 再求解。
+        """
+        from . import PROJECT_ROOT, solver_modules
+        from .parse import translate_scenarios
+
+        modules = solver_modules()
+        if data is None:
+            data = self.base_data or modules["load_project"](PROJECT_ROOT, base_id=self.base_id)
+            self.base_data = data
+        if options is None:
+            options = {t["任务编号"]: modules["candidates"](data, t) for t in data.tasks}
+        return translate_scenarios(utterance, data, options,
+                                   timeout=timeout, session_text=self.prompt_state())
+
     # ── 读出 ────────────────────────────────────────────────────────────
     def patches(self) -> list[Patch]:
         """当前生效的补丁集（排序稳定，指纹才可复现）。"""
