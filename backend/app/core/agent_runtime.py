@@ -391,7 +391,8 @@ class AgentRuntime:
             on_tool=on_tool,
             on_tool_trace=self._record_tool_call,
             jobs=self.jobs,
-            on_submit_change=None,
+            on_pending_change=lambda payload: self._persist_agent_pending(conversation_id, payload),
+            on_submit_change=self._submit_pending_change,
             yx_engine=self._yx_engine(conversation_id),
             user_message=user_message,
         )
@@ -445,6 +446,16 @@ class AgentRuntime:
                 "context_not_found", memory.activeView, [],
             )
 
+        # 0. 待确认变更：取消 / 确认（两步求解）
+        pending = (memory.activeFilters or {}).get("pendingChange")
+        if isinstance(pending, dict):
+            if "取消" in content or content.strip() in {"算了", "不要了", "放弃"}:
+                self._clear_persisted_pending(conversation_id)
+                return self._finalize_response(conversation_id, "已取消本次变更，没有生成新方案。", "change_cancelled", memory.activeView, [])
+            if "确认" in content or "生成沙盘" in content or content.strip() in {"算吧", "可以", "开始", "确定", "好", "行"}:
+                self._clear_persisted_pending(conversation_id)
+                return self._confirm_yx(conversation_id, pending, memory, sink)
+
         # 1. 查询：确定性路由（复用一修查询层）
         operations_question = detect_operations_question(content)
         if operations_question:
@@ -477,9 +488,8 @@ class AgentRuntime:
         if compare_reply is not None:
             return self._finalize_response(conversation_id, compare_reply, "version_compare", memory.activeView, [])
 
-        # 1.5 开放问句（为什么没找到最优 / 是不是MILP…）：复用一修的 LLM 工具循环，
-        # 用产品事实 + 读工具直接答，不硬套槽位。
-        if self._looks_like_question(content) and self.conversation_agent.enabled:
+        # 2. LLM 工具循环（主路径）：查询 / 开放问题 / 改排程都交给模型判断
+        if self.conversation_agent.enabled:
             try:
                 reply = self._answer_with_conversation_agent(
                     conversation_id=conversation_id,
@@ -489,12 +499,73 @@ class AgentRuntime:
                     selected_version=selected_version,
                     sink=sink,
                 )
-                return self._finalize_response(conversation_id, reply, "assistant_reply", memory.activeView, [])
+                submitted = getattr(self._tls, "submitted_response", None)
+                if submitted is not None:
+                    return submitted
+                latest = self.memories.get_or_create(conversation_id)
+                pending_now = (latest.activeFilters or {}).get("pendingChange")
+                created_now = isinstance(pending_now, dict) and pending_now.get("sourcePrompt") == content
+                return self._finalize_response(
+                    conversation_id, reply,
+                    "change_preview" if created_now else "assistant_reply",
+                    latest.activeView, [],
+                )
             except ConversationAgentError as exc:
-                self._note_degradation("agent_unavailable", "模型这一轮没答上来。", str(exc))
+                self._note_degradation("agent_unavailable", "模型这一轮没答上来，用规则兜底。", str(exc))
 
-        # 2. 改排程：槽位引擎（翻译 → 求解）
+        # 3. 兜底：LLM 不可用时，改排程走 yxcore 直接翻译
         return self._yx_solve(conversation_id, content, memory, sink)
+
+    def _submit_pending_change(self, conversation_id, pending, reason):
+        memory = self.memories.get_or_create(conversation_id)
+        if pending.get("kind") != "yx":
+            return {"ok": False, "message": "待确认的变更已经失效。"}
+        self._clear_persisted_pending(conversation_id)
+        resp = self._confirm_yx(conversation_id, pending, memory, None)
+        self._tls.submitted_response = resp
+        return {"ok": True, "jobId": None, "message": "真实求解已完成。"}
+
+    def _persist_agent_pending(self, conversation_id, pending):
+        latest = self.memories.get_or_create(conversation_id)
+        filters = dict(latest.activeFilters)
+        filters["pendingChange"] = pending
+        self.memories.apply_patch(latest, {"activeFilters": filters})
+
+    def _clear_persisted_pending(self, conversation_id):
+        latest = self.memories.get_or_create(conversation_id)
+        filters = dict(latest.activeFilters)
+        if "pendingChange" in filters:
+            filters.pop("pendingChange", None)
+            self.memories.apply_patch(latest, {"activeFilters": filters})
+
+    def _confirm_yx(self, conversation_id, pending, memory, sink):
+        engine = self._yx_engine(conversation_id)
+        content = str(pending.get("sourcePrompt") or "")
+        if sink:
+            sink.stage("solve", "CP-SAT 求解", "running")
+        try:
+            result = engine.run(seconds=60)
+        except Exception as exc:  # noqa: BLE001
+            return self._finalize_response(conversation_id, f"求解没成功：{exc}", "solve_failed", memory.activeView, [])
+        if sink:
+            sink.stage("solve", "CP-SAT 求解", "done")
+        version_id = f"ver_{uuid4().hex[:8]}"
+        version = engine.build_version(conversation_id, content, result, version_id)
+        self.versions.add(version)
+        if self.candidates is not None:
+            self.candidates.replace_for_version(conversation_id, version.id, version.windows)
+        self.memories.apply_patch(memory, {
+            "latestResultId": version.id,
+            "selectedVersionIds": [version.id],
+            "activeView": "P01",
+        })
+        info = result.get("求解") or {}
+        status = info.get("解状态") or "UNKNOWN"
+        body = self._format_product_reply(status, version.resultSummary, version)
+        return self._finalize_response(
+            conversation_id, body, "solve_completed", "P01", [version],
+            solve_evidence=self._product_solve_evidence(result, version.modelFingerprint or "", status),
+        )
 
     def _yx_solve(self, conversation_id: str, content: str, memory, sink):
         engine = self._yx_engine(conversation_id)
