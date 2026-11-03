@@ -492,10 +492,15 @@ class AgentRuntime:
         # 1.5 复合需求：分别按 N 种目标/策略排然后对比 → 批量预览 → 确认后并发求解
         engine = self._yx_engine(conversation_id)
         if any(k in content for k in ("分别", "对比", "两种", "两套", "各排", "几个方案", "多个方案")):
+            if sink:
+                sink.stage("detect", "识别复合需求", "running")
             try:
                 scenarios = engine.say_scenarios(content, timeout=90)
             except Exception:  # noqa: BLE001
                 scenarios = None
+            if sink:
+                sink.stage("detect", "识别复合需求", "done",
+                           detail="拆成 " + str(len(scenarios)) + " 套方案" if scenarios else None)
             if scenarios:
                 labels = [str(sc.get("标签") or f"方案{i+1}") for i, sc in enumerate(scenarios)]
                 preview = ("将按这些方案分别排：\n" + "\n".join(f"- {lab}" for lab in labels)
@@ -512,10 +517,14 @@ class AgentRuntime:
                 return self._finalize_response(conversation_id, preview, "batch_preview", memory.activeView, [])
 
         # 2. 改排程优先：yxcore 槽位翻译（可靠、确定性填槽）。翻不出旋钮（=不是排程约束）→ LLM 问答。
+        if sink:
+            sink.stage("translate", "理解：翻译成槽位补丁", "running")
         try:
             turn = engine.say(content, timeout=90)
         except Exception:  # noqa: BLE001
             turn = None
+        if sink:
+            sink.stage("translate", "理解：翻译成槽位补丁", "done")
         if turn is not None:
             echo = turn.echo()
             # 指代/范围/顺序不清 → 直接反问，不落 LLM 工具循环、也不当改排程预览
