@@ -26,6 +26,8 @@ from app.core.conversation_memory import (
     build_memory_snapshot,
 )
 from app.core.demo_access import begin_llm_turn, end_llm_turn
+from app.core.agent_tools import AgentToolbox
+from app.core.conversation_agent import ConversationAgent, ConversationAgentError
 from app.core.yx_engine import YxEngine
 from app.core.model_query import (
     detect_model_question,
@@ -182,6 +184,7 @@ class AgentRuntime:
         version_manager: VersionManager,
         jobs: SolveJobRepository | None = None,
         job_pool: ThreadPoolExecutor | None = None,
+        conversation_agent: ConversationAgent | None = None,
         traces: AgentTraceRepository | None = None,
         summary_repo: ConversationSummaryRepository | None = None,
         profile_repo: UserProfileRepository | None = None,
@@ -199,6 +202,7 @@ class AgentRuntime:
         self.jobs = jobs
         self.job_pool = job_pool or ThreadPoolExecutor(max_workers=2, thread_name_prefix="maintenance-solve")
         self._futures: dict[str, Future] = {}
+        self.conversation_agent = conversation_agent or ConversationAgent()
         self.traces = traces
         self.summary_repo = summary_repo
         self.profile_repo = profile_repo
@@ -353,6 +357,68 @@ class AgentRuntime:
             self._yx_engines[conversation_id] = engine
         return engine
 
+    @staticmethod
+    def _looks_like_question(content: str) -> bool:
+        """开放问句（为什么/是不是/怎么…）——这类不套槽位，交给 LLM 答。"""
+        text = content or ""
+        return any(
+            token in text
+            for token in ("为什么", "怎么会", "是不是", "会吗", "吗", "？", "?",
+                          "怎么", "是什么", "如何", "哪些", "哪个", "哪台", "谁")
+        )
+
+    def _build_toolbox(self, conversation_id, selected_version, sink, user_message=""):
+        def on_tool(name, _result):
+            if sink:
+                labels = {
+                    "read_versions": "已读取方案事实",
+                    "read_environment": "已读取风况与电价",
+                    "read_catalog": "已读取目标目录",
+                    "read_alarms": "已读取告警清单",
+                    "read_site": "已读取现场数据",
+                    "read_jobs": "已查看求解进展",
+                    "solve": "已准备变更预览",
+                }
+                label = labels.get(name, f"已执行 {name}")
+                sink.status(label)
+                sink.stage(f"tool.{name}", label, "done")
+
+        return AgentToolbox(
+            conversation_id=conversation_id,
+            versions=self.versions,
+            model_artifacts=self.model_artifacts,
+            selected_version_id=selected_version.id if selected_version else None,
+            on_tool=on_tool,
+            on_tool_trace=self._record_tool_call,
+            jobs=self.jobs,
+            on_submit_change=None,
+            yx_engine=self._yx_engine(conversation_id),
+            user_message=user_message,
+        )
+
+    def _answer_with_conversation_agent(self, *, conversation_id, content, history,
+                                        memory, selected_version, sink):
+        """开放问句：复用一修的 LLM 工具循环（读工具 + 产品事实），不硬套槽位。"""
+        toolbox = self._build_toolbox(conversation_id, selected_version, sink, user_message=content)
+        snapshot = self.memory_cache.get(conversation_id, len(history))
+        if snapshot is None:
+            snapshot = build_memory_snapshot(
+                conversation_id, history, memory,
+                self.versions.list_by_conversation(conversation_id),
+                llm_summary=self.conversation_agent.summarize(history) or "",
+            )
+            self.memory_cache.put(snapshot)
+        return self.conversation_agent.answer(
+            message=content,
+            history=history,
+            memory=memory,
+            toolbox=toolbox,
+            selected_version=selected_version,
+            snapshot=snapshot,
+            on_token=sink.token if sink else None,
+            on_status=sink.status if sink else None,
+        )
+
     def _yx_route(self, conversation_id: str, content: str, selected_version_id: str | None, sink):
         """小一修入口：查询走一修的确定性路由，改排程走 yxcore 槽位引擎。
 
@@ -410,6 +476,22 @@ class AgentRuntime:
         compare_reply = self._compare_versions_reply(conversation_id, content, selected_version)
         if compare_reply is not None:
             return self._finalize_response(conversation_id, compare_reply, "version_compare", memory.activeView, [])
+
+        # 1.5 开放问句（为什么没找到最优 / 是不是MILP…）：复用一修的 LLM 工具循环，
+        # 用产品事实 + 读工具直接答，不硬套槽位。
+        if self._looks_like_question(content) and self.conversation_agent.enabled:
+            try:
+                reply = self._answer_with_conversation_agent(
+                    conversation_id=conversation_id,
+                    content=content,
+                    history=self.messages.list_by_conversation(conversation_id),
+                    memory=memory,
+                    selected_version=selected_version,
+                    sink=sink,
+                )
+                return self._finalize_response(conversation_id, reply, "assistant_reply", memory.activeView, [])
+            except ConversationAgentError as exc:
+                self._note_degradation("agent_unavailable", "模型这一轮没答上来。", str(exc))
 
         # 2. 改排程：槽位引擎（翻译 → 求解）
         return self._yx_solve(conversation_id, content, memory, sink)
