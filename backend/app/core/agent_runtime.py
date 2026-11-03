@@ -454,7 +454,7 @@ class AgentRuntime:
                 return self._finalize_response(conversation_id, "已取消本次变更，没有生成新方案。", "change_cancelled", memory.activeView, [])
             if "确认" in content or "生成沙盘" in content or content.strip() in {"算吧", "可以", "开始", "确定", "好", "行"}:
                 self._clear_persisted_pending(conversation_id)
-                return self._confirm_yx(conversation_id, pending, memory, sink)
+                return self._start_planning_solve(conversation_id, pending, memory, sink)
 
         # 1. 查询：确定性路由（复用一修查询层）
         operations_question = detect_operations_question(content)
@@ -535,7 +535,7 @@ class AgentRuntime:
         if pending.get("kind") != "yx":
             return {"ok": False, "message": "待确认的变更已经失效。"}
         self._clear_persisted_pending(conversation_id)
-        resp = self._confirm_yx(conversation_id, pending, memory, None)
+        resp = self._start_planning_solve(conversation_id, pending, memory, None)
         self._tls.submitted_response = resp
         return {"ok": True, "jobId": None, "message": "真实求解已完成。"}
 
@@ -552,7 +552,7 @@ class AgentRuntime:
             filters.pop("pendingChange", None)
             self.memories.apply_patch(latest, {"activeFilters": filters})
 
-    def _confirm_yx(self, conversation_id, pending, memory, sink):
+    def _start_planning_solve(self, conversation_id, pending, memory, sink):
         content = str(pending.get("sourcePrompt") or "")
         if self.jobs is None or self.job_pool is None:
             # 没有求解任务仓库（测试/降级）：同步求解
