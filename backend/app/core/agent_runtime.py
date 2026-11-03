@@ -30,6 +30,7 @@ from app.core.conversation_memory import (
 from app.core.decision_contract import DecisionCompiler
 from app.core.demo_access import begin_llm_turn, end_llm_turn
 from app.core.maintenance_product_executor import MaintenanceProductExecutor, solver_status
+from app.core.yx_engine import YxEngine
 from app.core.model_change import (
     build_change_plan,
     build_scenario_batch,
@@ -223,6 +224,8 @@ class AgentRuntime:
         self.memory_repo = memory_repo
         self.memory_cache = ConversationMemoryCache()
         self._tls = threading.local()
+        # 小一修槽位引擎：每个会话一张旋钮表。与一修唯一的分叉点——理解层。
+        self._yx_engines: dict[str, YxEngine] = {}
 
     # ── trace ────────────────────────────────────────────────────────────────
 
@@ -361,6 +364,121 @@ class AgentRuntime:
             if item.get("event") in {"done", "error"}:
                 break
 
+    def _yx_engine(self, conversation_id: str) -> YxEngine:
+        engine = self._yx_engines.get(conversation_id)
+        if engine is None:
+            engine = YxEngine()
+            self._yx_engines[conversation_id] = engine
+        return engine
+
+    def _yx_route(self, conversation_id: str, content: str, selected_version_id: str | None, sink):
+        """小一修入口：查询走一修的确定性路由，改排程走 yxcore 槽位引擎。
+
+        一修和小一修唯一该有区别的是「理解层」——这里只替换理解层，
+        查询（告警/现场/环境/模型问题/对比）、记忆、版本、结果归一化仍共用一修的。
+        """
+        conversation = self.conversations.get(conversation_id)
+        if not conversation:
+            raise ValueError("Conversation not found")
+
+        now = datetime.now(SHANGHAI_TZ).isoformat()
+        self.messages.add(Message(
+            id=f"msg_{uuid4().hex[:8]}", conversationId=conversation_id,
+            role="user", content=content, createdAt=now,
+        ))
+        memory = self.memories.get_or_create(conversation_id)
+        selected_version, reference_kind = self._resolve_version(
+            conversation_id, selected_version_id, memory, content,
+        )
+        if reference_kind in {"id", "ordinal", "previous"} and selected_version is None:
+            return self._finalize_response(
+                conversation_id,
+                "没有找到你提到的方案。请确认方案序号或提供 ver_ 开头的版本号。",
+                "context_not_found", memory.activeView, [],
+            )
+
+        # 1. 查询：确定性路由（复用一修查询层）
+        operations_question = detect_operations_question(content)
+        if operations_question:
+            kind, scope = operations_question
+            return self._answer_operations_question(
+                conversation_id, content, kind, scope, selected_version, memory, sink=sink,
+            )
+        model_question = detect_model_question(content)
+        if model_question:
+            if model_question == "capability":
+                return self._answer_capability_question(conversation_id, content, memory)
+            if model_question == "environment":
+                return self._answer_environment_question(conversation_id, content, memory, selected_version)
+            if model_question == "structure" and not selected_version:
+                return self._answer_structure_question(conversation_id, content, memory)
+            if selected_version:
+                if model_question in {"parameter", "status"}:
+                    return self._answer_model_question(conversation_id, content, model_question, selected_version, memory)
+                return self._answer_agent_question(conversation_id, content, model_question, selected_version, memory, sink=sink)
+            return self._finalize_response(
+                conversation_id,
+                "当前会话还没有可查询的排程方案。请先生成方案，之后我才能解释模型、参数或结果。",
+                "model_query_empty", memory.activeView, [],
+            )
+        compare_reply = self._compare_versions_reply(conversation_id, content, selected_version)
+        if compare_reply is not None:
+            return self._finalize_response(conversation_id, compare_reply, "version_compare", memory.activeView, [])
+
+        # 2. 改排程：槽位引擎（翻译 → 求解）
+        return self._yx_solve(conversation_id, content, memory, sink)
+
+    def _yx_solve(self, conversation_id: str, content: str, memory, sink):
+        engine = self._yx_engine(conversation_id)
+        if sink:
+            sink.stage("translate", "翻译成槽位补丁", "running")
+        try:
+            turn = engine.say(content, timeout=90)
+        except Exception as exc:  # noqa: BLE001
+            return self._finalize_response(
+                conversation_id, f"这句没接：{exc}", "change_rejected", memory.activeView, [],
+            )
+        echo = turn.echo()
+        if sink:
+            sink.stage("translate", "翻译成槽位补丁", "done")
+        if turn.错误:
+            text = "\n".join(f"- {line}" for line in echo)
+            return self._finalize_response(conversation_id, text, "change_rejected", memory.activeView, [])
+
+        if sink:
+            sink.stage("solve", "CP-SAT 求解", "running")
+        try:
+            result = engine.run(seconds=60)
+        except Exception as exc:  # noqa: BLE001
+            text = "\n".join(f"- {line}" for line in echo) + f"\n\n- 求解没成功：{exc}"
+            return self._finalize_response(conversation_id, text, "solve_failed", memory.activeView, [])
+        if sink:
+            sink.stage("solve", "CP-SAT 求解", "done")
+
+        version_id = f"ver_{uuid4().hex[:8]}"
+        version = engine.build_version(conversation_id, content, result, version_id)
+        self.versions.add(version)
+        if self.candidates is not None:
+            self.candidates.replace_for_version(conversation_id, version.id, version.windows)
+        self.memories.apply_patch(memory, {
+            "latestResultId": version.id,
+            "selectedVersionIds": [version.id],
+            "activeView": "P01",
+        })
+
+        info = result.get("求解") or {}
+        status = info.get("解状态") or "UNKNOWN"
+        summary = engine.session.summary()
+        head = "\n".join(f"- {line}" for line in echo)
+        if summary:
+            head += "\n\n**现在按这些在排：**\n" + "\n".join(f"- {line}" for line in summary)
+        body = self._format_product_reply(status, version.resultSummary, version)
+        reply = f"{head}\n\n{body}" if head else body
+        return self._finalize_response(
+            conversation_id, reply, "solve_completed", "P01", [version],
+            solve_evidence=self._product_solve_evidence(result, version.modelFingerprint or "", status),
+        )
+
     def _submit_message(
         self,
         conversation_id: str,
@@ -376,6 +494,10 @@ class AgentRuntime:
 
         self._begin_trace(conversation_id, content)
         self._tls.engine = resolve_engine(engine)
+
+        # 小一修：理解层是槽位引擎（yxcore），不走一修的 LLM 工具循环 / DSL 构造。
+        # 查询/记忆/求解任务/台账/结果归一化仍共用一修的，只是入口在此分叉。
+        return self._yx_route(conversation_id, content, selected_version_id, sink)
 
         now = datetime.now(SHANGHAI_TZ).isoformat()
         self.messages.add(Message(
