@@ -431,6 +431,12 @@ class AgentRuntime:
             text = "\n".join(f"- {line}" for line in echo)
             return self._finalize_response(conversation_id, text, "change_rejected", memory.activeView, [])
 
+        # 拒绝（不在边界内，如「均衡一下」）或没改任何槽位：不求解，直接回显。
+        if turn.拒绝 or not (turn.新增 or turn.修订 or turn.撤销):
+            text = "\n".join(f"- {line}" for line in echo)
+            action = "change_rejected" if turn.拒绝 else "assistant_reply"
+            return self._finalize_response(conversation_id, text, action, memory.activeView, [])
+
         if sink:
             sink.stage("solve", "CP-SAT 求解", "running")
         try:
