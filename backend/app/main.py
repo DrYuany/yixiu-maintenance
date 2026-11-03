@@ -29,7 +29,6 @@ from app.core.demo_access import (
     normalize_key,
 )
 from app.core.memory_manager import MemoryManager
-from app.core.maintenance_product_executor import MaintenanceProductExecutor
 from app.core.result_normalizer import ResultNormalizer
 from app.core.version_manager import VersionManager
 from app.core.solve_jobs import SolveJobRepository
@@ -313,7 +312,6 @@ def create_app() -> FastAPI:
         normalizer=ResultNormalizer(),
         version_manager=VersionManager(),
         jobs=solve_jobs,
-        product_executor=MaintenanceProductExecutor(),
         traces=trace_repo,
         summary_repo=summary_repo,
         profile_repo=profile_repo,
