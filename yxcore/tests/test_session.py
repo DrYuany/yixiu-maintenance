@@ -196,6 +196,16 @@ def test_回显带错误():
     assert any("没照做" in line and "不在册" in line for line in turn.echo())
 
 
+def test_回显澄清():
+    """指代不清时反问，不是「没接」也不是「没照做」。"""
+    from yxcore.session import Turn
+    turn = Turn(原话="只完成前五个任务")
+    turn.澄清 = "前五个按什么顺序取？"
+    lines = turn.echo()
+    assert any("请问" in line and "前五个" in line for line in lines)
+    assert not turn.拒绝
+
+
 def test_改主意忘撤旧的要提示(data):
     s = Session(data)
     s.apply([P(slot="count_max", value=8,

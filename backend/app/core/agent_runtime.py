@@ -496,6 +496,13 @@ class AgentRuntime:
             turn = None
         if turn is not None:
             echo = turn.echo()
+            # 指代/范围/顺序不清 → 直接反问，不落 LLM 工具循环、也不当改排程预览
+            if turn.澄清:
+                return self._finalize_response(
+                    conversation_id,
+                    f"需要你再说清楚一点：{turn.澄清}",
+                    "clarification", memory.activeView, [],
+                )
             is_change = bool(turn.新增 or turn.修订 or turn.撤销) and not turn.错误 and not turn.拒绝
             if not is_change:
                 # 不是排程约束（问题/开放问句/越界）→ 复用一修的 LLM 工具循环答

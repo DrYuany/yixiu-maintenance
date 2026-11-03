@@ -95,7 +95,7 @@ def test_llm_matches_gold(snapshot):
     for case in CASES:
         if not case["期望"]:
             continue
-        patches, reason = translate(case["话术"], data, options)
+        patches, reason, _clarify = translate(case["话术"], data, options)
         if reason or not patches:
             mismatched.append(f"「{case['话术']}」被拒：{reason}")
             continue

@@ -40,6 +40,7 @@ class Turn:
     无变化: list[Patch] = field(default_factory=list)               # 又说了同一格同一个值
     待确认: list[str] = field(default_factory=list)
     提示: list[str] = field(default_factory=list)                   # 没拦下、但用户该知道的事
+    澄清: str | None = None                                          # 指代/范围不清，需要用户再补一个条件
     拒绝: str | None = None
     错误: list[str] = field(default_factory=list)
     数据: Any = None        # 快照：回显要把格子说成人话（部件名称、几号船）
@@ -63,6 +64,8 @@ class Turn:
             lines.append(f"需要你确认：{text}")
         for text in self.提示:
             lines.append(f"提醒一句：{text}")
+        if self.澄清:
+            lines.append(f"请问：{self.澄清}")
         if self.拒绝:
             lines.append(f"这句没接：{self.拒绝}")
         # 错误必须回显。只记在 错误 里、回显却不带，界面上就是「什么都没发生」——
@@ -266,8 +269,8 @@ class Session:
         if options is None:
             options = {t["任务编号"]: modules["candidates"](data, t) for t in data.tasks}
         try:
-            patches, reason = translate(utterance, data, options,
-                                        timeout=timeout, session_text=self.prompt_state())
+            patches, reason, clarify = translate(utterance, data, options,
+                                                 timeout=timeout, session_text=self.prompt_state())
         except LLMUnavailable as exc:
             # 翻译失败不毁会话：这一轮记一条「没翻成」，表不动，用户可以再说一遍。
             # 一路抛出去的话，界面层拿到的是一条栈，而不是「刚才那句没听懂」。
@@ -281,6 +284,8 @@ class Session:
         if reason:
             # 有补丁又有拒绝理由时两件事都记：不许悄悄只留一半
             turn.拒绝 = reason
+        if clarify:
+            turn.澄清 = clarify
         if not turn.错误 and patches:
             # 一轮要么整体落地、要么整体不落地。半个补丁进状态比拦下来危险得多：
             # 下一轮会拿着这张被污染的表继续改，错的地方再也不会被提出来。
@@ -337,6 +342,7 @@ class Session:
             "空撤销": [p.to_json() for p in t.空撤销],
             "无变化": [p.to_json() for p in t.无变化],
             "待确认": t.待确认,
+            "澄清": t.澄清,
             "拒绝": t.拒绝,
             "错误": t.错误,
         } for t in self.turns]

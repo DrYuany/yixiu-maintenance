@@ -89,11 +89,14 @@ def _strip_fences(text: str) -> str:
 
 def translate(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
               extra: str = "", timeout: float = 90.0,
-              session_text: str = "") -> tuple[list[Patch], str | None]:
-    """把一句话翻译成补丁集。返回 (补丁, 拒绝理由)。
+              session_text: str = "") -> tuple[list[Patch], str | None, str | None]:
+    """把一句话翻译成补丁集。返回 (补丁, 拒绝理由, 澄清问题)。
 
     拒绝理由非空表示模型认为这句话做不到（边界清单里的一类）——这是**诚实的拒绝**，
     调用方要原样转述给用户，不许拿近似槽位补上。
+
+    澄清问题非空表示模型听懂了这句话，但**指代/范围/顺序不清**（如前N个、最早N个没说
+    按什么排序），需要用户再给一个条件才能填槽。这不是拒绝，是反问。
 
     ``session_text`` 是多轮时上一段的「当前已生效旋钮」清单：模型靠它才能把
     「刚才那条去掉」落成同一个格子的 reset，否则只能凭记忆重写索引（十次有九次跑偏）。
@@ -114,9 +117,12 @@ def translate(utterance: str, data, options: dict[str, list[dict]] | None = None
     if not isinstance(payload, dict):
         raise LLMUnavailable(f"大模型返回的不是对象：{raw[:200]}")
     reason = payload.get("拒绝理由") or payload.get("refusal")
+    clarify = payload.get("澄清") or payload.get("clarify") or payload.get("需要澄清")
     items = payload.get("patches") or payload.get("补丁") or []
     if not items:
-        return [], reason or "大模型没有给出任何补丁"
+        if clarify:
+            return [], None, clarify
+        return [], reason or "大模型没有给出任何补丁", None
     patches: list[Patch] = []
     errors: list[str] = []
     for item in items:
@@ -138,7 +144,7 @@ def translate(utterance: str, data, options: dict[str, list[dict]] | None = None
                 f"这句话里有一条我没读懂（{detail}）。整句先没执行——"
                 "请再说一遍，或者把它拆成两句")
         raise LLMUnavailable(detail)
-    return patches, reason
+    return patches, reason, clarify
 
 
 def translate_and_validate(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
@@ -146,9 +152,9 @@ def translate_and_validate(utterance: str, data, options: dict[str, list[dict]] 
     """翻译 + 校验一步到位。返回 (补丁, 错误, 告警)。"""
     from .validate import validate
 
-    patches, reason = translate(utterance, data, options, extra=extra)
+    patches, reason, clarify = translate(utterance, data, options, extra=extra)
     if not patches:
-        raise Refused(reason or "这句话没有对应的旋钮")
+        raise Refused(reason or clarify or "这句话没有对应的旋钮")
     errors, warnings = validate(patches, data, options)
     return patches, errors, warnings
 
