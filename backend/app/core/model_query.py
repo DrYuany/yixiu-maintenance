@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from dsl_core import objective_catalog
 from app.schemas.agent import WindowVersion
 
 
@@ -334,13 +333,24 @@ def render_solution_answer(version: WindowVersion, message: str) -> str:
 
 
 def render_capability_answer() -> str:
-    """能力问句的确定性回答，不依赖任何版本。"""
-    return objective_catalog.capability_markdown()
+    """能力问句的确定性回答，不依赖任何版本。小一修答的是槽位旋钮，不是 DSL 目标模板。"""
+    from yxcore import slots as S
+
+    head = (
+        "strategy 四选一：" + "、".join(S.STRATEGY_NAMES) + "\n"
+        "weight 的 14 个量：" + "、".join(S.METRIC_NAMES)
+    )
+    from yxcore.prompt import _slot_lines, _boundary_text
+
+    return "\n\n".join([head, _slot_lines(), _boundary_text()])
 
 
 def render_structure_answer() -> str:
-    """还没有具体方案时的结构解释：模板长什么样，而不是这次取了多少。"""
-    return objective_catalog.structure_markdown()
+    """还没有具体方案时的结构解释：小一修是槽位填表模型，不是自定义公式。"""
+    return (
+        "小一修是槽位填表模型：约束的形状预先冻结，模型只往已注册的旋钮里填数，"
+        "不生成自定义公式或约束。能改什么见上面的旋钮清单。"
+    )
 
 
 def render_status_answer(version: WindowVersion) -> str:

@@ -829,28 +829,22 @@ class AgentToolbox:
         return result
 
     def _read_catalog(self, _arguments: dict[str, Any]) -> dict[str, Any]:
-        from dsl_core import objective_catalog
+        # 小一修的「目录」是槽位注册表（38 个旋钮），不是大一修的目标模板。
+        from yxcore import slots as S
+        from yxcore.prompt import _slot_lines, _disambiguation, _boundary_text
 
-        strategies = [
-            {
-                "name": strategy,
-                "layered": [
-                    {"metric": metric, "direction": direction}
-                    for metric, direction in objective_catalog.layered_objectives(strategy)
-                ],
-                "weightedDefaults": objective_catalog.weighted_defaults(strategy),
-            }
-            for strategy in objective_catalog.strategies()
-        ]
+        head = (
+            "strategy 四选一：" + "、".join(S.STRATEGY_NAMES) + "\n"
+            "weight 的 14 个量：" + "、".join(S.METRIC_NAMES)
+        )
+        markdown = "\n\n".join([head, _slot_lines(), _disambiguation(), _boundary_text()])
         return self._envelope(
             "ok",
             {
-                "templateVersion": objective_catalog.template_version(),
-                "strategies": strategies,
-                "sharedWeightedMetrics": list(
-                    objective_catalog.shared_weighted_metrics()
-                ),
-                "markdown": objective_catalog.weight_table_markdown(),
+                "strategies": list(S.STRATEGY_NAMES),
+                "weightedMetrics": list(S.METRIC_NAMES),
+                "markdown": markdown,
+                "verbatim": True,
             },
         )
 

@@ -8,7 +8,6 @@ from typing import Any, Callable
 
 from anthropic import Anthropic
 
-from dsl_core import objective_catalog
 from app.core.agent_tools import AgentToolbox
 from app.core.demo_access import resolve_api_key
 from app.core.conversation_memory import (
@@ -323,10 +322,7 @@ class ConversationAgent:
                 f"（{selected_version.id}）"
             )
         plan_block = "\n".join(plans) if plans else "本会话还没有方案。"
-        try:
-            catalog_block = objective_catalog.catalog_markdown()
-        except Exception:  # pragma: no cover - 目录缺失时降级，不阻断对话
-            catalog_block = "（目标模板目录暂不可读）"
+        catalog_block = _slot_catalog()
         memory_block = render_memory_context(snapshot) if snapshot else ""
         return f"""你是海上风电检修排程产品的对话 Agent。你正在和生产环境中的检修计划员对话。
 
@@ -340,7 +336,7 @@ class ConversationAgent:
 本会话背景记忆（只读背景，具体数字仍以工具为准）：
 {memory_block}
 
-可配置的目标（能力目录，唯一来源是目标模板文件）：
+能改的旋钮（形状冻结，只填数；唯一来源是小一修槽位注册表）：
 {catalog_block}
 
 产品内已有的现场数据（都有，不要跟用户说“没有数据源”）：
@@ -373,16 +369,15 @@ class ConversationAgent:
 
 工作方式：
 1. 九个工具：只读六个（read_versions 方案事实、read_environment 风况电价海况、
-   read_catalog 目标目录、read_alarms 告警待修、read_site 现场数据、
-   read_jobs 求解任务进度）；改模型两个（solve 出预览、submit_change 提交）；
+   read_catalog 旋钮目录、read_alarms 告警待修、read_site 现场数据、
+   read_jobs 求解任务进度）；改排程两个（solve 出预览、submit_change 提交）；
    写盘一个（ledger 检修单 / 出海清单 / 审批 / 现场回填）。
    **什么时候用哪个、参数怎么传，以每个工具的说明为准**——那是唯一权威，这里不重复。
 2. 跨工具的顺序不能乱（这条工具说明装不下，所以留在这里）：
-   要改模型 → solve 出预览 → 等用户确认 → submit_change 提交；没有 solve 过的预览不能提交。
+   要改排程 → solve 出预览（把话翻译成上面清单里的旋钮）→ 等用户确认 → submit_change 提交；
+   没有 solve 过的预览不能提交。
    ledger 的下发 / 审批 / 回填同理，先读后写。
    你不能声称已求解、已生成方案、已修改数据或已导出文件。
-   一句话要算多个方案时用 scenarios 各写一条，每条都要能独立成立——
-   不要写“同上”“第二版”，它们会被分别编译，写成指代就编译不出东西。
 3. 数字必须来自工具：工具没返回前不要断言“没有数据”，也不要凭记忆或历史消息补造、重算。
    返回 not_available / not_found 时说清缺的是哪个域、哪次运行缺、可选补救，
    不要先说“我去导出”，也不要事后重建冒充原模型。
@@ -390,20 +385,35 @@ class ConversationAgent:
    不要把工具 JSON、字段名或内部变量名倒给用户，要转成中文业务词、列表或表格。
    公式、参数表、环境表、变更契约**原样输出**，不得改写公式、变量、系数或约束。
 5. 普通聊天、解释概念、询问算法原理，直接回答，不必调用工具。
-   能力类问题（有哪些目标函数、哪些指标能加权、支持哪些策略、怎么设置权重或模式）
-   按上面的目录回答，不调用工具，也不需要先有方案；目录里没有的指标一律不能说“支持”。
+   能力类问题（有哪些旋钮、strategy 四选一是哪四个、weight 的 14 个量是哪些）
+   按上面的目录回答，不调用工具，也不需要先有方案；目录里没有的旋钮一律不能说"支持"。
    上面“产品事实”那几条是产品级常识，可以直接讲，不要因为“本会话还没有方案”就拒答；
    只有具体某次运行的成本、系数、耗时、任务安排才必须读方案。
 6. 对比：工具会给同一张指标矩阵、相对基准的差值和可比性限制，你只做解读——
    先给结论，再给 2 到 4 条关键差异，不要自己做减法。
    只有 comparability.savingsClaimAllowed 为 true 才能说“节省”；
    costCertainty 是 inconclusive / unverified 时必须明说不能据此判定谁更省。
-7. 用户只想要模型结构、还没指定某一版时，讲模板形式（分层是字典序、加权是权重合并），
-   并说明具体系数要读某一版的模型产物；不要把模板当成某次求解的实际取值。
+7. 用户问模型结构/目标怎么设时，讲旋钮形式（strategy 是四选一的整体排程风格、
+   weight 是 14 个量上的加权偏好），并说明具体取值要读某一版的方案事实；不要把旋钮当成某次求解的实际取值。
 8. 风况、电价、海况这类时间序列：原样输出工具返回的 Markdown 或图表协议，不要自己重排数字。
    聊天框能渲染 Markdown 表格，不能渲染真正的图表；用户要“可视化”时先给表，
    并把关键峰值、低谷、窗口位置说清楚；不要因为画不了图就拒答，也不要把表格说成图。
 """
+
+
+def _slot_catalog() -> str:
+    """小一修能改的旋钮清单，从 yxcore 注册表反向生成（唯一事实来源）。"""
+    try:
+        from yxcore import slots as S
+        from yxcore.prompt import _boundary_text, _disambiguation, _slot_lines
+
+        head = (
+            "strategy 四选一：" + "、".join(S.STRATEGY_NAMES) + "\n"
+            "weight 的 14 个量：" + "、".join(S.METRIC_NAMES)
+        )
+        return "\n\n".join([head, _slot_lines(), _disambiguation(), _boundary_text()])
+    except Exception:  # pragma: no cover
+        return "（旋钮注册表暂不可读）"
 
 
 def _wan(value: Any) -> str:

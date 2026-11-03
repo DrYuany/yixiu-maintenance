@@ -27,23 +27,8 @@ def test_environment_questions_route_to_the_environment_scope() -> None:
     assert detect_model_question("接下来一周的风速和电价可视化一下") == "environment"
     assert detect_model_question("明天风大吗") == "environment"
     assert detect_model_question("下周海况怎么样") == "environment"
-    # 带“重排”的是变更请求，不该被当成查天气。
+    # 带"重排"的是变更请求，不该被当成查天气。
     assert detect_model_question("明天风变大，重排一版") is None
-
-
-def test_capability_answer_comes_from_the_objective_template() -> None:
-    from app.core.model_query import render_capability_answer
-
-    answer = render_capability_answer()
-    # 指标表在前，「能改的数据」「能加的限制」在后面。
-    weight_section = answer.split("**能改的数据**")[0]
-
-    assert "高风险优先抢修" in answer
-    assert "成本最低优先" in answer
-    assert "总经济成本" in answer
-    # 现金支出是「能加的限制」，不是「可加权的目标」，只能出现在限制段。
-    assert "现金支出" not in weight_section
-    assert "现金支出不超过500万" in answer
 
 
 def test_status_answer_explains_unknown_stage_in_business_language() -> None:
