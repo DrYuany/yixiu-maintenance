@@ -65,9 +65,9 @@ class Turn:
         for text in self.提示:
             lines.append(f"提醒一句：{text}")
         if self.澄清:
-            intents = [str(c.get("意图", "")) for c in self.澄清 if c.get("意图")]
-            if intents:
-                lines.append("你是想：" + "　".join(f"{i+1}. {t}" for i, t in enumerate(intents)) + "？")
+            questions = [str(g.get("问", "")) for g in self.澄清 if g.get("问")]
+            if questions:
+                lines.append("需要澄清：" + "；".join(questions))
             else:
                 lines.append("需要你再补一个条件才能填槽。")
         if self.拒绝:
@@ -366,8 +366,11 @@ class Session:
             "无变化": [p.to_json() for p in t.无变化],
             "待确认": t.待确认,
             "澄清": (
-                [{"意图": c.get("意图"), "patches": [p.to_json() for p in c.get("patches") or []]}
-                 for c in t.澄清] if t.澄清 else None
+                [{"问": g.get("问"),
+                  "候选": [{"意图": c.get("意图"),
+                            "patches": [p.to_json() for p in c.get("patches") or []]}
+                           for c in (g.get("候选") or [])]}
+                 for g in t.澄清] if t.澄清 else None
             ),
             "拒绝": t.拒绝,
             "错误": t.错误,

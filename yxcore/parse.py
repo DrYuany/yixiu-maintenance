@@ -88,34 +88,52 @@ def _strip_fences(text: str) -> str:
 
 
 def _parse_clarify(payload: dict[str, Any]) -> list[dict] | None:
-    """把「澄清」字段解析成候选意图清单 ``[{"意图": str, "patches": [Patch...]}, ...]``。
+    """把「澄清」字段解析成**问题组** ``[{"问": str, "候选": [{"意图": str, "patches": [Patch...]}, ...]}, ...]``。
 
-    模型在指代/范围/顺序不清时，不猜唯一解，而是枚举几种说得通的解释、各给一条候选补丁，
-    让用户点选。兼容旧的字符串形式（那种没有候选，退回成开放式反问）。
+    一句话可能有多个歧义（复合意图），模型把它们拆成多个问题组，每组一个问句 + 若干候选补丁，
+    让用户逐个点选。兼容旧的字符串形式（退回成开放式反问，无候选）。
     """
     raw = payload.get("澄清") or payload.get("clarify") or payload.get("需要澄清")
     if not raw:
         return None
     if isinstance(raw, str):
-        return [{"意图": raw, "patches": []}]
+        return [{"问": raw, "候选": []}]
     if not isinstance(raw, list):
         return None
-    out: list[dict] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        intent = str(item.get("意图") or item.get("label") or item.get("name") or "").strip()
+
+    def _patches(items) -> list[Patch]:
         patches: list[Patch] = []
-        for p in item.get("patches") or item.get("补丁") or []:
+        for p in items or []:
             if not isinstance(p, dict):
                 continue
             patch, error = parse_patch(p)
             if patch is None:
                 continue  # 某条候选补丁解析失败就跳过这条，不影响别的候选
             patches.append(normalize_patch(patch))
-        if intent or patches:
-            out.append({"意图": intent, "patches": patches})
-    return out or None
+        return patches
+
+    groups: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if "候选" in item or "candidates" in item:
+            # 分组形式：一个问句 + 一组候选
+            question = str(item.get("问") or item.get("question") or "").strip()
+            cands: list[dict] = []
+            for c in item.get("候选") or item.get("candidates") or []:
+                if not isinstance(c, dict):
+                    continue
+                intent = str(c.get("意图") or c.get("label") or c.get("name") or "").strip()
+                pats = _patches(c.get("patches") or c.get("补丁"))
+                if intent or pats:
+                    cands.append({"意图": intent, "patches": pats})
+            groups.append({"问": question, "候选": cands})
+        else:
+            # 旧平铺形式：一条候选，包成一个单候选组
+            intent = str(item.get("意图") or item.get("label") or item.get("name") or "").strip()
+            pats = _patches(item.get("patches") or item.get("补丁"))
+            groups.append({"问": "", "候选": [{"意图": intent, "patches": pats}]})
+    return groups or None
 
 
 def translate(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
