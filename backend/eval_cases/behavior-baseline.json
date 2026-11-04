@@ -1,0 +1,103 @@
+{
+  "passed": false,
+  "total": 7,
+  "passed_count": 6,
+  "failed_cases": [
+    "q-alarm-002"
+  ],
+  "regressions": [],
+  "results": [
+    {
+      "id": "chg-001",
+      "passed": true,
+      "checks": [
+        {
+          "name": "action",
+          "passed": true,
+          "reason": "期望 change_preview，得到 change_preview"
+        },
+        {
+          "name": "关键词[14400]",
+          "passed": true,
+          "reason": "命中"
+        }
+      ]
+    },
+    {
+      "id": "chg-002",
+      "passed": true,
+      "checks": [
+        {
+          "name": "action",
+          "passed": true,
+          "reason": "期望 change_preview，得到 change_preview"
+        },
+        {
+          "name": "关键词[高风险优先抢修]",
+          "passed": true,
+          "reason": "命中"
+        }
+      ]
+    },
+    {
+      "id": "clar-001",
+      "passed": true,
+      "checks": [
+        {
+          "name": "action",
+          "passed": true,
+          "reason": "期望 clarification，得到 clarification"
+        },
+        {
+          "name": "选项数",
+          "passed": true,
+          "reason": "期望 >= 2，得到 2"
+        }
+      ]
+    },
+    {
+      "id": "comp-001",
+      "passed": true,
+      "checks": [
+        {
+          "name": "action",
+          "passed": true,
+          "reason": "期望 batch_preview，得到 batch_preview"
+        }
+      ]
+    },
+    {
+      "id": "q-alarm-001",
+      "passed": true,
+      "checks": [
+        {
+          "name": "action",
+          "passed": true,
+          "reason": "期望 alarm_answer，得到 alarm_answer"
+        }
+      ]
+    },
+    {
+      "id": "q-alarm-002",
+      "passed": false,
+      "checks": [
+        {
+          "name": "action",
+          "passed": false,
+          "reason": "期望 alarm_answer，得到 assistant_reply"
+        }
+      ]
+    },
+    {
+      "id": "q-cap-001",
+      "passed": true,
+      "checks": [
+        {
+          "name": "action",
+          "passed": true,
+          "reason": "期望 capability_answer，得到 capability_answer"
+        }
+      ]
+    }
+  ]
+}

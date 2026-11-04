@@ -1023,7 +1023,6 @@ class AgentRuntime:
             return None, reference_kind
         return base_version, reference_kind
 
-    @staticmethod
     def _answer_capability_question(
         self,
         conversation_id: str,
