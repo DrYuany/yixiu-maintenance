@@ -197,12 +197,13 @@ def test_回显带错误():
 
 
 def test_回显澄清():
-    """指代不清时反问，不是「没接」也不是「没照做」。"""
+    """指代不清时枚举候选让用户选，不是「没接」也不是「没照做」。"""
     from yxcore.session import Turn
     turn = Turn(原话="只完成前五个任务")
-    turn.澄清 = "前五个按什么顺序取？"
+    turn.澄清 = [{"意图": "按截止最早取前五个", "patches": []},
+                 {"意图": "按严重度最高取前五个", "patches": []}]
     lines = turn.echo()
-    assert any("请问" in line and "前五个" in line for line in lines)
+    assert any("你是想" in line and "按截止最早" in line and "按严重度最高" in line for line in lines)
     assert not turn.拒绝
 
 

@@ -40,7 +40,7 @@ class Turn:
     无变化: list[Patch] = field(default_factory=list)               # 又说了同一格同一个值
     待确认: list[str] = field(default_factory=list)
     提示: list[str] = field(default_factory=list)                   # 没拦下、但用户该知道的事
-    澄清: str | None = None                                          # 指代/范围不清，需要用户再补一个条件
+    澄清: list[dict] | None = None   # 候选意图 [{"意图": str, "patches": [Patch...]}, ...]，让用户点选
     拒绝: str | None = None
     错误: list[str] = field(default_factory=list)
     数据: Any = None        # 快照：回显要把格子说成人话（部件名称、几号船）
@@ -65,7 +65,11 @@ class Turn:
         for text in self.提示:
             lines.append(f"提醒一句：{text}")
         if self.澄清:
-            lines.append(f"请问：{self.澄清}")
+            intents = [str(c.get("意图", "")) for c in self.澄清 if c.get("意图")]
+            if intents:
+                lines.append("你是想：" + "　".join(f"{i+1}. {t}" for i, t in enumerate(intents)) + "？")
+            else:
+                lines.append("需要你再补一个条件才能填槽。")
         if self.拒绝:
             lines.append(f"这句没接：{self.拒绝}")
         # 错误必须回显。只记在 错误 里、回显却不带，界面上就是「什么都没发生」——
@@ -361,7 +365,10 @@ class Session:
             "空撤销": [p.to_json() for p in t.空撤销],
             "无变化": [p.to_json() for p in t.无变化],
             "待确认": t.待确认,
-            "澄清": t.澄清,
+            "澄清": (
+                [{"意图": c.get("意图"), "patches": [p.to_json() for p in c.get("patches") or []]}
+                 for c in t.澄清] if t.澄清 else None
+            ),
             "拒绝": t.拒绝,
             "错误": t.错误,
         } for t in self.turns]

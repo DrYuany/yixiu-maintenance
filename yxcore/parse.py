@@ -87,16 +87,48 @@ def _strip_fences(text: str) -> str:
     return text
 
 
+def _parse_clarify(payload: dict[str, Any]) -> list[dict] | None:
+    """把「澄清」字段解析成候选意图清单 ``[{"意图": str, "patches": [Patch...]}, ...]``。
+
+    模型在指代/范围/顺序不清时，不猜唯一解，而是枚举几种说得通的解释、各给一条候选补丁，
+    让用户点选。兼容旧的字符串形式（那种没有候选，退回成开放式反问）。
+    """
+    raw = payload.get("澄清") or payload.get("clarify") or payload.get("需要澄清")
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        return [{"意图": raw, "patches": []}]
+    if not isinstance(raw, list):
+        return None
+    out: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        intent = str(item.get("意图") or item.get("label") or item.get("name") or "").strip()
+        patches: list[Patch] = []
+        for p in item.get("patches") or item.get("补丁") or []:
+            if not isinstance(p, dict):
+                continue
+            patch, error = parse_patch(p)
+            if patch is None:
+                continue  # 某条候选补丁解析失败就跳过这条，不影响别的候选
+            patches.append(normalize_patch(patch))
+        if intent or patches:
+            out.append({"意图": intent, "patches": patches})
+    return out or None
+
+
 def translate(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
               extra: str = "", timeout: float = 90.0,
-              session_text: str = "") -> tuple[list[Patch], str | None, str | None]:
-    """把一句话翻译成补丁集。返回 (补丁, 拒绝理由, 澄清问题)。
+              session_text: str = "") -> tuple[list[Patch], str | None, list[dict] | None]:
+    """把一句话翻译成补丁集。返回 (补丁, 拒绝理由, 澄清候选)。
 
     拒绝理由非空表示模型认为这句话做不到（边界清单里的一类）——这是**诚实的拒绝**，
     调用方要原样转述给用户，不许拿近似槽位补上。
 
-    澄清问题非空表示模型听懂了这句话，但**指代/范围/顺序不清**（如前N个、最早N个没说
-    按什么排序），需要用户再给一个条件才能填槽。这不是拒绝，是反问。
+    澄清候选非空表示模型听懂了这句话，但**指代/范围/顺序不清**（如前N个、最早N个没说
+    按什么排序）。此时不猜唯一解，而是枚举候选解释、各带一条能落地的补丁，让用户点选。
+    形如 ``[{"意图": str, "patches": [Patch...]}, ...]``；旧字符串形式则退化成开放式反问。
 
     ``session_text`` 是多轮时上一段的「当前已生效旋钮」清单：模型靠它才能把
     「刚才那条去掉」落成同一个格子的 reset，否则只能凭记忆重写索引（十次有九次跑偏）。
@@ -117,7 +149,7 @@ def translate(utterance: str, data, options: dict[str, list[dict]] | None = None
     if not isinstance(payload, dict):
         raise LLMUnavailable(f"大模型返回的不是对象：{raw[:200]}")
     reason = payload.get("拒绝理由") or payload.get("refusal")
-    clarify = payload.get("澄清") or payload.get("clarify") or payload.get("需要澄清")
+    clarify = _parse_clarify(payload)
     items = payload.get("patches") or payload.get("补丁") or []
     if not items:
         if clarify:
@@ -154,7 +186,10 @@ def translate_and_validate(utterance: str, data, options: dict[str, list[dict]] 
 
     patches, reason, clarify = translate(utterance, data, options, extra=extra)
     if not patches:
-        raise Refused(reason or clarify or "这句话没有对应的旋钮")
+        if clarify:
+            intents = [str(c.get("意图", "")) for c in clarify if c.get("意图")]
+            raise Refused("需要澄清：" + "；".join(intents) if intents else "这句话没有对应的旋钮")
+        raise Refused(reason or "这句话没有对应的旋钮")
     errors, warnings = validate(patches, data, options)
     return patches, errors, warnings
 

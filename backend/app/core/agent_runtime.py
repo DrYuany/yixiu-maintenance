@@ -450,6 +450,30 @@ class AgentRuntime:
         # 0. 待确认变更：取消 / 确认（两步求解）
         pending = (memory.activeFilters or {}).get("pendingChange")
         if isinstance(pending, dict):
+            if pending.get("kind") == "clarify":
+                choice = self._match_clarify_choice(content, pending.get("candidates") or [])
+                if choice is None:
+                    labels = [str(c.get("意图")) for c in (pending.get("candidates") or [])]
+                    text = ("没对应上，你是想：\n"
+                            + "\n".join(f"{i+1}. {lab}" for i, lab in enumerate(labels)) + "？")
+                    return self._finalize_response(conversation_id, text, "clarification", memory.activeView, [])
+                # 用户选了某条候选：直接落候选补丁 → 预览 → 确认 → 求解
+                self._clear_persisted_pending(conversation_id)
+                engine = self._yx_engine(conversation_id)
+                patches = self._patches_from_payload(choice.get("patches") or [])
+                applied = engine.session.apply(patches)
+                echo = applied.echo()
+                summary = engine.session.summary()
+                lines = [f"- {line}" for line in echo]
+                if summary:
+                    lines.append("")
+                    lines.append("现在按这些在排：")
+                    lines.extend(f"- {line}" for line in summary)
+                preview = "\n".join(lines)
+                self._persist_agent_pending(conversation_id, {
+                    "kind": "yx", "sourcePrompt": content, "utterance": content, "preview": preview,
+                })
+                return self._finalize_response(conversation_id, preview, "change_preview", memory.activeView, [])
             if "取消" in content or content.strip() in {"算了", "不要了", "放弃"}:
                 self._clear_persisted_pending(conversation_id)
                 return self._finalize_response(conversation_id, "已取消本次变更，没有生成新方案。", "change_cancelled", memory.activeView, [])
@@ -527,13 +551,22 @@ class AgentRuntime:
             sink.stage("translate", "理解：翻译成槽位补丁", "done")
         if turn is not None:
             echo = turn.echo()
-            # 指代/范围/顺序不清 → 直接反问，不落 LLM 工具循环、也不当改排程预览
+            # 指代/范围/顺序不清 → 枚举候选让用户点选，不落 LLM 工具循环、也不当改排程预览
             if turn.澄清:
-                return self._finalize_response(
-                    conversation_id,
-                    f"需要你再说清楚一点：{turn.澄清}",
-                    "clarification", memory.activeView, [],
-                )
+                candidates = turn.澄清
+                labels = [str(c.get("意图") or f"选项{i+1}") for i, c in enumerate(candidates)]
+                text = ("这句话有几种理解，你是想：\n"
+                        + "\n".join(f"{i+1}. {lab}" for i, lab in enumerate(labels))
+                        + "\n\n回复序号（如「1」）或直接说意图即可。")
+                self._persist_agent_pending(conversation_id, {
+                    "kind": "clarify",
+                    "candidates": [
+                        {"意图": lab, "patches": [p.to_json() for p in (c.get("patches") or [])]}
+                        for lab, c in zip(labels, candidates)
+                    ],
+                    "sourcePrompt": content,
+                })
+                return self._finalize_response(conversation_id, text, "clarification", memory.activeView, [])
             is_change = bool(turn.新增 or turn.修订 or turn.撤销) and not turn.错误 and not turn.拒绝
             if not is_change:
                 # 不是排程约束（问题/开放问句/越界）→ 复用一修的 LLM 工具循环答
@@ -688,6 +721,23 @@ class AgentRuntime:
                 raise ValueError(error or "补丁反序列化失败")
             patches.append(normalize_patch(patch))
         return patches
+
+    @staticmethod
+    def _match_clarify_choice(text: str, candidates: list[dict]) -> dict | None:
+        """把用户回复（序号或意图）匹配到某条候选；匹配不上返回 None。"""
+        text = (text or "").strip()
+        n = len(candidates or [])
+        # 序号：1 / 第1个 / 选1 / 选项1 / ①
+        for i in range(n):
+            if text in {str(i + 1), f"第{i + 1}个", f"第{i + 1}项", f"选{i + 1}",
+                        f"选项{i + 1}", f"{i + 1}.", f"{i + 1}）", f"{i + 1})"}:
+                return candidates[i]
+        # 意图标签：用户说了意图里的字
+        for cand in candidates:
+            label = str(cand.get("意图") or "").strip()
+            if label and (label in text or text in label):
+                return cand
+        return None
 
     def _execute_batch_job(self, job_id, conversation_id, label, raw_patches):
         engine = YxEngine()
