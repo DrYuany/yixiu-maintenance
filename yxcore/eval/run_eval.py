@@ -183,11 +183,11 @@ def run_e2_online(*, seconds: float = 90.0) -> tuple[list[str], list[str]]:
     cautions: list[str] = []
     for case in UTTERANCES:
         if not case["期望"]:
-            patches, reason, _clarify = translate(case["话术"], data, options, timeout=seconds)
+            patches, reason, _clarify, _scenarios = translate(case["话术"], data, options, timeout=seconds)
             if patches:
                 failures.append(f"E2在线[{case['话术']}]：应拒绝却给了补丁 {[p.slot for p in patches]}（糊弄）")
             continue
-        patches, reason, _clarify = translate(case["话术"], data, options, timeout=seconds)
+        patches, reason, _clarify, _scenarios = translate(case["话术"], data, options, timeout=seconds)
         if reason or not patches:
             failures.append(f"E2在线[{case['话术']}]：被错误拒绝：{reason}")
             continue

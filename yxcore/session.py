@@ -41,6 +41,7 @@ class Turn:
     待确认: list[str] = field(default_factory=list)
     提示: list[str] = field(default_factory=list)                   # 没拦下、但用户该知道的事
     澄清: list[dict] | None = None   # 候选意图 [{"意图": str, "patches": [Patch...]}, ...]，让用户点选
+    场景: list[dict] | None = None   # 复合需求 N 套 [{"标签": str, "patches": [Patch...]}, ...]
     拒绝: str | None = None
     错误: list[str] = field(default_factory=list)
     数据: Any = None        # 快照：回显要把格子说成人话（部件名称、几号船）
@@ -273,14 +274,20 @@ class Session:
         if options is None:
             options = {t["任务编号"]: modules["candidates"](data, t) for t in data.tasks}
         try:
-            patches, reason, clarify = translate(utterance, data, options,
-                                                 timeout=timeout, session_text=self.prompt_state())
+            patches, reason, clarify, scenarios = translate(utterance, data, options,
+                                                            timeout=timeout, session_text=self.prompt_state())
         except LLMUnavailable as exc:
             # 翻译失败不毁会话：这一轮记一条「没翻成」，表不动，用户可以再说一遍。
             # 一路抛出去的话，界面层拿到的是一条栈，而不是「刚才那句没听懂」。
             turn = Turn(原话=utterance, 数据=self.base_data)
             # 直接放原因，不再加「翻成补丁失败」这类前缀——回显那边已经有「这句没照做」
             turn.错误.append(str(exc))
+            self.turns.append(turn)
+            return turn
+        if scenarios:
+            # 复合需求：不落本会话状态，直接把 N 套场景交出去
+            turn = Turn(原话=utterance, 数据=self.base_data)
+            turn.场景 = scenarios
             self.turns.append(turn)
             return turn
         before = dict(self.state)
@@ -307,25 +314,6 @@ class Session:
     def say_all(self, utterances: list[str], *, timeout: float = 90.0) -> list[Turn]:
         """连续说几句（评测和回归用）。每轮都看得见上一轮的结果。"""
         return [self.say(text, timeout=timeout) for text in utterances]
-
-    def say_scenarios(self, utterance: str, data=None, options=None, *,
-                      timeout: float = 90.0) -> list[dict] | None:
-        """识别复合需求，返回 N 张场景 ``[{"标签": str, "patches": [Patch...]}, ...]``。
-
-        非复合返回 None。这一入口不改本会话的状态——场景只是「候选方案」，
-        真要跑得由编排层把它们各自落成独立的 Session 再求解。
-        """
-        from . import PROJECT_ROOT, solver_modules
-        from .parse import translate_scenarios
-
-        modules = solver_modules()
-        if data is None:
-            data = self.base_data or modules["load_project"](PROJECT_ROOT, base_id=self.base_id)
-            self.base_data = data
-        if options is None:
-            options = {t["任务编号"]: modules["candidates"](data, t) for t in data.tasks}
-        return translate_scenarios(utterance, data, options,
-                                   timeout=timeout, session_text=self.prompt_state())
 
     # ── 读出 ────────────────────────────────────────────────────────────
     def patches(self) -> list[Patch]:
@@ -371,6 +359,10 @@ class Session:
                             "patches": [p.to_json() for p in c.get("patches") or []]}
                            for c in (g.get("候选") or [])]}
                  for g in t.澄清] if t.澄清 else None
+            ),
+            "场景": (
+                [{"标签": s.get("标签"), "patches": [p.to_json() for p in s.get("patches") or []]}
+                 for s in t.场景] if t.场景 else None
             ),
             "拒绝": t.拒绝,
             "错误": t.错误,
