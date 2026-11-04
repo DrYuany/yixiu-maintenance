@@ -28,7 +28,7 @@ from app.core.conversation_memory import (
 from app.core.demo_access import begin_llm_turn, end_llm_turn
 from app.core.agent_tools import AgentToolbox
 from app.core.conversation_agent import ConversationAgent, ConversationAgentError
-from app.core.yx_engine import YxEngine
+from app.core.yx_engine import YxEngine, _SOLVE_SECONDS
 from app.core.model_query import (
     detect_model_question,
     render_capability_answer,
@@ -614,7 +614,7 @@ class AgentRuntime:
             # 没有求解任务仓库（测试/降级）：同步求解
             return self._yx_run_sync(conversation_id, content, memory, sink)
         # 后台异步求解：建任务 → 丢线程池 → 立即返回，前端轮询进度
-        job = self.jobs.create(conversation_id, {"kind": "yx", "message": content}, "")
+        job = self.jobs.create(conversation_id, {"kind": "yx", "message": content, "budgetSeconds": _SOLVE_SECONDS}, "")
         self._futures[job.id] = self.job_pool.submit(
             self._execute_job, job.id, conversation_id, content
         )
@@ -647,7 +647,7 @@ class AgentRuntime:
         for i, sc in enumerate(scenarios):
             job = self.jobs.create(
                 conversation_id,
-                {"kind": "batch", "label": labels[i], "patches": sc.get("patches") or []},
+                {"kind": "batch", "label": labels[i], "patches": sc.get("patches") or [], "budgetSeconds": _SOLVE_SECONDS},
                 "",
             )
             self._futures[job.id] = self.job_pool.submit(
