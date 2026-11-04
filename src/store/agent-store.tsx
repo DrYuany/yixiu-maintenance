@@ -12,6 +12,7 @@ import { setStoredApiKey } from "@/lib/llm-key";
 import type {
   AgentResponse,
   CandidateWindow,
+  ClarificationOption,
   Conversation,
   ConversationDetail,
   DashboardResponse,
@@ -56,6 +57,8 @@ interface AgentStoreValue {
    * 不写进消息正文：正文是产品产出，这条是系统状态，混在一起会被摘抄走。
    */
   degraded: (DegradedPayload & { messageId: string }) | null;
+  /** 澄清候选（意图推荐）：非空时在消息下方渲染可点击选项。 */
+  clarificationOptions: ClarificationOption[] | null;
   /** 免费体验额度；null = 还没读到（不显示提示） */
   quota: QuotaInfo | null;
   /**
@@ -141,6 +144,7 @@ export function AgentStoreProvider({
   const [stages, setStages] = useState<StageEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [degraded, setDegraded] = useState<(DegradedPayload & { messageId: string }) | null>(null);
+  const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[] | null>(null);
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
   const [quotaBlocked, setQuotaBlocked] = useState<{ message: string } | null>(null);
   const [engine, setEngine] = useState<"llm" | "rule">("llm");
@@ -279,6 +283,7 @@ export function AgentStoreProvider({
       setSending(true);
       setError(null);
       setDegraded(null);
+      setClarificationOptions(null);
       const optimisticMessage: Message = {
         id: `temp_${Date.now()}`,
         conversationId: currentConversationId,
@@ -315,6 +320,7 @@ export function AgentStoreProvider({
             ? { ...response.degraded, messageId: response.assistantMessage.id }
             : null,
         );
+        setClarificationOptions(response.clarificationOptions ?? null);
         if (response.solveJob) {
           setActiveJobs((previous) => {
             const others = previous.filter((job) => job.id !== response.solveJob!.id);
@@ -682,6 +688,7 @@ export function AgentStoreProvider({
       pendingChange,
       stages,
       degraded,
+      clarificationOptions,
       engine,
       quota,
       quotaBlocked,
@@ -720,6 +727,7 @@ export function AgentStoreProvider({
       pendingChange,
       stages,
       degraded,
+      clarificationOptions,
       engine,
       quota,
       quotaBlocked,

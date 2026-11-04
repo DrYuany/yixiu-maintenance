@@ -56,7 +56,7 @@ from app.db.models import (
     ModelArtifactRepository,
     VersionRepository,
 )
-from app.schemas.agent import AgentResponse, AssistantMessagePayload, DecisionArtifactPayload, DegradedPayload, Message, SolveEvidencePayload, SolveJobPayload
+from app.schemas.agent import AgentResponse, AssistantMessagePayload, ClarificationOptionPayload, DecisionArtifactPayload, DegradedPayload, Message, SolveEvidencePayload, SolveJobPayload
 from app.schemas.dashboard import DashboardResponse
 
 
@@ -566,7 +566,12 @@ class AgentRuntime:
                     ],
                     "sourcePrompt": content,
                 })
-                return self._finalize_response(conversation_id, text, "clarification", memory.activeView, [])
+                options = [ClarificationOptionPayload(label=lab, value=str(i + 1))
+                           for i, lab in enumerate(labels)]
+                return self._finalize_response(
+                    conversation_id, text, "clarification", memory.activeView, [],
+                    clarification_options=options,
+                )
             is_change = bool(turn.新增 or turn.修订 or turn.撤销) and not turn.错误 and not turn.拒绝
             if not is_change:
                 # 不是排程约束（问题/开放问句/越界）→ 复用一修的 LLM 工具循环答
@@ -1478,6 +1483,7 @@ class AgentRuntime:
         solve_evidence: SolveEvidencePayload | None = None,
         solve_job: SolveJobPayload | None = None,
         solve_job_id: str | None = None,
+        clarification_options: list[ClarificationOptionPayload] | None = None,
     ) -> AgentResponse:
         now = datetime.now(SHANGHAI_TZ).isoformat()
         trace_id = self._finish_trace(conversation_id, action_type, solve_evidence)
@@ -1522,6 +1528,7 @@ class AgentRuntime:
             decisionArtifact=decision_artifact,
             solveEvidence=solve_evidence,
             solveJob=solve_job,
+            clarificationOptions=clarification_options,
             traceId=trace_id,
             degraded=self._take_degradation(),
         )

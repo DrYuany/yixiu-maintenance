@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import type {
+  ClarificationOption,
   Message,
   PendingModelChange,
   QuotaInfo,
@@ -35,6 +36,7 @@ interface Props {
   activeJob?: SolveJob | null;
   pendingChange?: PendingModelChange | null;
   stages?: StageEvent[];
+  clarificationOptions?: ClarificationOption[] | null;
   contextVersion?: WindowVersion | null;
   onSend: (message: string) => Promise<void>;
   onOpenVersion: (versionId: string) => void;
@@ -145,6 +147,7 @@ export function ConversationCanvas({
   activeJob,
   pendingChange,
   stages = [],
+  clarificationOptions = null,
   contextVersion,
   onSend,
   onOpenVersion,
@@ -318,6 +321,22 @@ export function ConversationCanvas({
               </div>
             </div>
           </article>
+        ) : null}
+
+        {clarificationOptions && clarificationOptions.length > 0 && !sending ? (
+          <div className="clarify-options" aria-live="polite">
+            <div className="clarify-options-label">你可以点选一个：</div>
+            {clarificationOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className="clarify-option"
+                onClick={() => void onSend(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         ) : null}
 
         {sending || (solving && !backgrounded) ? (

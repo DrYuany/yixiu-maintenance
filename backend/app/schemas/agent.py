@@ -123,6 +123,12 @@ class SolveEvidencePayload(BaseModel):
     modelFingerprint: str | None = None
 
 
+class ClarificationOptionPayload(BaseModel):
+    """澄清候选：一条可点击的意图解释，label 给人看，value 是回给后端的序号/意图。"""
+    label: str
+    value: str
+
+
 class SolveJobPayload(BaseModel):
     id: str
     conversationId: str
@@ -178,5 +184,6 @@ class AgentResponse(BaseModel):
     decisionArtifact: DecisionArtifactPayload | None = None
     solveEvidence: SolveEvidencePayload | None = None
     solveJob: SolveJobPayload | None = None
+    clarificationOptions: list[ClarificationOptionPayload] | None = None
     traceId: str | None = None
     degraded: DegradedPayload | None = None

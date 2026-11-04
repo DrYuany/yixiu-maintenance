@@ -23,6 +23,7 @@ export function AgentWorkspace() {
     activeJob,
     pendingChange,
     stages,
+    clarificationOptions,
     versions,
     createConversation,
     selectConversation,
@@ -92,6 +93,7 @@ export function AgentWorkspace() {
           activeJob={activeJob}
           pendingChange={pendingChange}
           stages={stages}
+          clarificationOptions={clarificationOptions}
           contextVersion={contextVersion}
           onClearContext={() => setContextVersionId(null)}
           onSend={(message) =>

@@ -238,6 +238,11 @@ export interface QuotaInfo {
   ownKey: boolean;
 }
 
+export interface ClarificationOption {
+  label: string;
+  value: string;
+}
+
 export interface AgentResponse {
   assistantMessage: {
     id: string;
@@ -247,6 +252,7 @@ export interface AgentResponse {
   };
   actionType: string;
   recommendedView: PageId;
+  clarificationOptions?: ClarificationOption[] | null;
   /**
    * 有值说明这一轮没有走成模型，答复是确定性兜底。
    * 兜底答复和正常答复长得一模一样，不单独标出来用户无从分辨。
