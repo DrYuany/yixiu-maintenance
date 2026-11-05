@@ -42,7 +42,9 @@ class ProductRuntimeTests(unittest.TestCase):
         data = load_project(PROJECT, as_of='2026-10-23T18:00:00+08:00')
         data.tasks = data.tasks[:3]
         with tempfile.TemporaryDirectory() as out:
-            result = recommend(data, Path(out), seconds=30)
+            # 分层模式的保证是「全阶段证最优 + 排程可复现」，本身就是慢路径；
+            # 默认模式（加权）的诚实保证另有专门用例 test_weighted_default_is_fast_and_honest。
+            result = recommend(data, Path(out), seconds=30, mode='分层')
             self.assertTrue(result['求解']['有解'])
             self.assertIn(result['求解']['解状态'], {'OPTIMAL', 'FEASIBLE'})
             self.assertIn(result['求解']['终止原因'], {'COMPLETED', 'TIME_LIMIT'})
@@ -54,12 +56,28 @@ class ProductRuntimeTests(unittest.TestCase):
             self.assertTrue((Path(out) / '推荐报告.html').exists())
             verify_schedule(data, result['推荐']['排程'])
 
+    def test_weighted_default_is_fast_and_honest(self):
+        """默认模式（加权）：快，且没证到最优就如实报 FEASIBLE / TIE_NOT_PROVEN。"""
+        data = load_project(PROJECT, as_of='2026-10-23T18:00:00+08:00')
+        data.tasks = data.tasks[:3]
+        with tempfile.TemporaryDirectory() as out:
+            result = recommend(data, Path(out), seconds=30)
+            self.assertTrue(result['求解']['有解'])
+            self.assertEqual(result['求解']['目标模式'], '加权')
+            self.assertEqual(result['求解']['解状态'], 'FEASIBLE')
+            self.assertIn(result['求解']['终止原因'], {'COMPLETED', 'TIME_LIMIT', 'TIE_NOT_PROVEN'})
+            self.assertTrue(result['推荐']['复核通过'])
+            self.assertEqual(result['推荐']['完成任务数'], 3)
+            verify_schedule(data, result['推荐']['排程'])
+
     def test_completed_optimal_runs_have_identical_schedule(self):
         data = load_project(PROJECT, as_of='2026-10-23T18:00:00+08:00')
         data.tasks = data.tasks[:2]
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            result_a = recommend(data, Path(first), seconds=8)
-            result_b = recommend(data, Path(second), seconds=8)
+            # 排程逐条目可复现是分层（全证最优 + 确定性决胜）的模式保证；
+            # 加权在时限内同一加权目标常有多个等价排程，FEASIBLE 本来就不保证复现。
+            result_a = recommend(data, Path(first), seconds=8, mode='分层')
+            result_b = recommend(data, Path(second), seconds=8, mode='分层')
 
         self.assertEqual(result_a['求解']['解状态'], 'OPTIMAL')
         self.assertEqual(result_b['求解']['解状态'], 'OPTIMAL')

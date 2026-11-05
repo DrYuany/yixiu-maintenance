@@ -166,7 +166,10 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
         # ── B 组目标 ──
         if patch.slot == "strategy":
             request.strategy = str(value)
-            request.mode = request.mode or "分层"
+            # 目标模式默认「加权」：一阶段一次求解，分层（逐阶段锁等式、每阶段证明最优）
+            # 是 5 分钟算不出来的主因。要绝对优先时用 count_min/count_max 硬约束表达，
+            # 不靠目标分层（分层+加权见 agent_tools 的对比指令，仍有显式 mode 入口）。
+            request.mode = request.mode or "加权"
             request.echo.append(f"目标策略按「{value}」")
             continue
 

@@ -257,7 +257,7 @@ def account(data, schedule):
             '现金支出':round(rent+labor+material+other,2),'复核通过':True,'排程':sorted(schedule,key=lambda s:(s['开始'],s['作业线']))}
 
 
-def build_model(data, options, partial=False, strategy='成本最低优先', mode='分层', weights=None, limits=None, extra_constraints=None, custom_stages=None):
+def build_model(data, options, partial=False, strategy='成本最低优先', mode='加权', weights=None, limits=None, extra_constraints=None, custom_stages=None):
     m=cp_model.CpModel();choices=[];task_vars={};cost_terms=[];cash_terms=[];constant=0
     # 小一修（小一修/）要按「人工费 / 备件费 / 船舶艘天」三个口径设上限和权重，
     # 这三个量不进目标函数，只是登记进 metrics 供注入口闭包和目标加权取用。
@@ -408,7 +408,7 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
     return m,choices,stages,cost
 
 
-def solve(data, options, output, seconds=None, strategy='成本最低优先', mode='分层', weights=None, limits=None, partial=False, hint=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, custom_stages=None, gap_limit=None):
+def solve(data, options, output, seconds=None, strategy='成本最低优先', mode='加权', weights=None, limits=None, partial=False, hint=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, custom_stages=None, gap_limit=None):
     # 时限与容差只有一个来源，见 solve_budget：参数总表 → 调用方显式 → 环境上限。
     # 以前这里还藏着一次 min(seconds, MWA_SOLVE_SECONDS)，公告却按 300 秒说，
     # 于是在界面上同时存在 300 / 60 / 30 三个数。
@@ -607,7 +607,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     return selected, {'求解器':'OR-Tools CP-SAT','模型形式':'有界整数线性目标及可线性化调度约束',
         '求解器参数':solver_parameters,
         '有解':selected is not None,'解状态':solve_status,'终止原因':termination_reason,
-        '最优性':quality,
+        '目标模式':mode,'最优性':quality,
         # 预算与容差：公告、参数总表、版本对比都读这一份，不再各算各的。
         '预算':{'seconds':seconds,'gapLimit':gap_limit,
                 'secondsSource':budget['secondsSource'],'gapSource':budget['gapSource'],
@@ -626,7 +626,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         '模型产物文件':artifact['artifactFile'],'模型产物指纹':artifact_fingerprint}
 
 
-def recommend(data, output, seconds=None, strategy='成本最低优先', mode='分层', weights=None, limits=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, custom_stages=None, partial=False, dsl=None, gap_limit=None):
+def recommend(data, output, seconds=None, strategy='成本最低优先', mode='加权', weights=None, limits=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, custom_stages=None, partial=False, dsl=None, gap_limit=None):
     if strategy not in STRATEGIES: raise ValueError('未知策略')
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     if (output/'结果.json').exists(): raise ValueError('输出目录已有结果，请使用新目录保留历史版本')
