@@ -459,44 +459,44 @@ class AgentRuntime:
                     return self._finalize_response(conversation_id, "这句没接：没有可选的澄清项。", "change_rejected", memory.activeView, [])
                 current = groups[idx] if 0 <= idx < len(groups) else groups[-1]
                 choice = self._match_clarify_choice(content, current.get("候选") or [])
-                if choice is None:
-                    text, options = self._clarify_group_text(current, min(idx, len(groups) - 1), len(groups))
-                    return self._finalize_response(
-                        conversation_id, text, "clarification", memory.activeView, [],
-                        clarification_options=options,
-                    )
-                # 匹配上了：累积这条候选的补丁
-                chosen.extend(choice.get("patches") or [])
-                if idx + 1 < len(groups):
-                    # 还有下一问：问下一个问题
-                    nxt = idx + 1
-                    text, options = self._clarify_group_text(groups[nxt], nxt, len(groups))
+                if choice is not None:
+                    # 匹配上了：累积这条候选的补丁
+                    chosen.extend(choice.get("patches") or [])
+                    if idx + 1 < len(groups):
+                        # 还有下一问：问下一个问题
+                        nxt = idx + 1
+                        text, options = self._clarify_group_text(groups[nxt], nxt, len(groups))
+                        self._persist_agent_pending(conversation_id, {
+                            "kind": "clarify", "groups": groups, "chosen": chosen,
+                            "nextIndex": nxt, "sourcePrompt": pending.get("sourcePrompt"),
+                        })
+                        return self._finalize_response(
+                            conversation_id, text, "clarification", memory.activeView, [],
+                            clarification_options=options,
+                        )
+                    # 全部答完：应用所有选中的补丁 → 预览 → 确认 → 求解
+                    self._clear_persisted_pending(conversation_id)
+                    engine = self._yx_engine(conversation_id)
+                    patches = self._patches_from_payload(chosen)
+                    applied = engine.session.apply(patches)
+                    echo = applied.echo()
+                    summary = engine.session.summary()
+                    lines = [f"- {line}" for line in echo]
+                    if summary:
+                        lines.append("")
+                        lines.append("现在按这些在排：")
+                        lines.extend(f"- {line}" for line in summary)
+                    preview = "\n".join(lines)
                     self._persist_agent_pending(conversation_id, {
-                        "kind": "clarify", "groups": groups, "chosen": chosen,
-                        "nextIndex": nxt, "sourcePrompt": pending.get("sourcePrompt"),
+                        "kind": "yx", "sourcePrompt": pending.get("sourcePrompt") or content,
+                        "utterance": content, "preview": preview,
                     })
-                    return self._finalize_response(
-                        conversation_id, text, "clarification", memory.activeView, [],
-                        clarification_options=options,
-                    )
-                # 全部答完：应用所有选中的补丁 → 预览 → 确认 → 求解
+                    return self._finalize_response(conversation_id, preview, "change_preview", memory.activeView, [])
+                # choice is None：用户没选序号/意图，而是重新表述了需求
+                # → 清掉澄清、刷新 memory，落到下面的「查询 → 翻译」重新理解这句话，
+                #   别死循环重问同一个问题。
                 self._clear_persisted_pending(conversation_id)
-                engine = self._yx_engine(conversation_id)
-                patches = self._patches_from_payload(chosen)
-                applied = engine.session.apply(patches)
-                echo = applied.echo()
-                summary = engine.session.summary()
-                lines = [f"- {line}" for line in echo]
-                if summary:
-                    lines.append("")
-                    lines.append("现在按这些在排：")
-                    lines.extend(f"- {line}" for line in summary)
-                preview = "\n".join(lines)
-                self._persist_agent_pending(conversation_id, {
-                    "kind": "yx", "sourcePrompt": pending.get("sourcePrompt") or content,
-                    "utterance": content, "preview": preview,
-                })
-                return self._finalize_response(conversation_id, preview, "change_preview", memory.activeView, [])
+                memory = self.memories.get_or_create(conversation_id)
             if "取消" in content or content.strip() in {"算了", "不要了", "放弃"}:
                 self._clear_persisted_pending(conversation_id)
                 return self._finalize_response(conversation_id, "已取消本次变更，没有生成新方案。", "change_cancelled", memory.activeView, [])
@@ -772,9 +772,11 @@ class AgentRuntime:
             head += f"（共 {total} 个问题）"
         text = (head + "，你是想：\n"
                 + "\n".join(f"{i+1}. {lab}" for i, lab in enumerate(labels))
-                + "\n\n回复序号（如「1」）或直接说意图即可。")
+                + "\n\n回复序号（如「1」），或直接说你的要求（比如「只做任务6-10」）。")
         options = [ClarificationOptionPayload(label=lab, value=str(i + 1))
                    for i, lab in enumerate(labels)]
+        # 给一个「都不是」的出口：用户想说自己，就点它，前端切回自由输入
+        options.append(ClarificationOptionPayload(label="都不是，我重新说", value="__custom__"))
         return text, options
 
     def _execute_batch_job(self, job_id, conversation_id, label, raw_patches):

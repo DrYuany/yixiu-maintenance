@@ -59,6 +59,8 @@ interface AgentStoreValue {
   degraded: (DegradedPayload & { messageId: string }) | null;
   /** 澄清候选（意图推荐）：非空时在消息下方渲染可点击选项。 */
   clarificationOptions: ClarificationOption[] | null;
+  /** 关掉澄清选项（点「都不是，我重新说」时），让用户自由输入。 */
+  dismissClarification: () => void;
   /** 免费体验额度；null = 还没读到（不显示提示） */
   quota: QuotaInfo | null;
   /**
@@ -455,6 +457,7 @@ export function AgentStoreProvider({
   }, [refreshQuota]);
 
   const dismissQuota = useCallback(() => setQuotaBlocked(null), []);
+  const dismissClarification = useCallback(() => setClarificationOptions(null), []);
 
   const controlActiveJob = useCallback(async (action: "wait" | "background" | "use_incumbent" | "stop") => {
     if (!activeJob) return;
@@ -699,6 +702,7 @@ export function AgentStoreProvider({
       clearApiKey,
       refreshQuota,
       dismissQuota,
+      dismissClarification,
       setView: setCurrentView,
       setEngine,
       setSortMode,
@@ -735,6 +739,7 @@ export function AgentStoreProvider({
       clearApiKey,
       refreshQuota,
       dismissQuota,
+      dismissClarification,
       loading,
       messages,
       refreshCurrentConversation,

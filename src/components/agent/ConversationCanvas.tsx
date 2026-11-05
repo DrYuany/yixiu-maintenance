@@ -37,6 +37,7 @@ interface Props {
   pendingChange?: PendingModelChange | null;
   stages?: StageEvent[];
   clarificationOptions?: ClarificationOption[] | null;
+  onDismissClarify?: () => void;
   contextVersion?: WindowVersion | null;
   onSend: (message: string) => Promise<void>;
   onOpenVersion: (versionId: string) => void;
@@ -148,6 +149,7 @@ export function ConversationCanvas({
   pendingChange,
   stages = [],
   clarificationOptions = null,
+  onDismissClarify = () => undefined,
   contextVersion,
   onSend,
   onOpenVersion,
@@ -330,8 +332,14 @@ export function ConversationCanvas({
               <button
                 key={option.value}
                 type="button"
-                className="clarify-option"
-                onClick={() => void onSend(option.value)}
+                className={`clarify-option${option.value === "__custom__" ? " is-custom" : ""}`}
+                onClick={() => {
+                  if (option.value === "__custom__") {
+                    onDismissClarify();
+                  } else {
+                    void onSend(option.value);
+                  }
+                }}
               >
                 {option.label}
               </button>

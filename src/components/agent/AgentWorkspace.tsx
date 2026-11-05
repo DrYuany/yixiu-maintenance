@@ -35,6 +35,7 @@ export function AgentWorkspace() {
     quotaBlocked,
     saveApiKey,
     clearApiKey,
+    dismissClarification,
   } = useAgentStore();
   const [contextVersionId, setContextVersionId] = useState<string | null>(null);
   const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
@@ -94,6 +95,7 @@ export function AgentWorkspace() {
           pendingChange={pendingChange}
           stages={stages}
           clarificationOptions={clarificationOptions}
+          onDismissClarify={dismissClarification}
           contextVersion={contextVersion}
           onClearContext={() => setContextVersionId(null)}
           onSend={(message) =>
