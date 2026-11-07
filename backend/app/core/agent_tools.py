@@ -457,28 +457,27 @@ class AgentToolbox:
             {
                 "name": "solve",
                 "description": (
-                    "把用户明确提出的排程变更（策略、目标模式、权重、参数、约束、重新排程）"
-                    "编译成确定性变更预览。只预览，不会求解、不会写库；"
-                    "用户回复确认后系统才会真正求解。引用必须原样保留用户的关键数字和说法。\n"
-                    "用户一句话里要算**多个方案**（「加权和分层各算一版，对比」"
-                    "「成本最低优先和最短完成优先都比一下」）时，用 scenarios 把每个方案"
-                    "各写一条；每条都要能独立成立，不要写「同上」「第二版」。"
+                    "把用户的排程变更编译成确定性变更预览。只预览，不会求解、不会写库；"
+                    "用户回复确认后系统才会真正求解。\n"
+                    "什么时候必须调它：这句话在**约束或改变排程**——策略、目标模式、权重、"
+                    "参数、重排，也包括限定数量和范围（「只修前五个」「任务6-10别排」）。"
+                    "说法含糊、指代或顺序不清时更要调它：它会给出**给用户点选的结构化澄清**"
+                    "（会自动枚举候选，含「都不是我重新说」出口），"
+                    "不要在聊天里自己问「你是指…吗」，也不要替用户挑一种含义往下推。\n"
+                    "翻译引擎拿的是用户原话；instruction 只是补充。"
+                    "一句话里要算多个方案时，不必自己拆 scenarios——引擎会从原话识别复合需求。"
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "instruction": {
                             "type": "string",
-                            "description": "用户这次要改的内容，尽量原文；不要自行补参数。单方案时用它。",
+                            "description": "引擎用用户原话翻译，此参数可省略；要给就给用户原话，不要自行补参数。",
                         },
                         "scenarios": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": (
-                                "多方案时用：每个方案一条，按用户说的顺序。"
-                                "例如「加权和分层各算一版」→ [「改成加权，成本最低优先」，"
-                                "「改成分层，成本最低优先」]。给了它就不必再给 instruction。"
-                            ),
+                            "description": "可省略：引擎会从原话识别复合需求。给就每条独立成立，不要写「同上」。"
                         },
                         "baseVersion": {
                             **version_arg,
@@ -1631,9 +1630,17 @@ class AgentToolbox:
         return result
 
     def _solve_inner(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """solve 工具：把「改排程」翻译成槽位补丁，出预览，等确认（小一修理解层）。"""
+        """solve 工具：把「改排程」翻译成槽位补丁，出预览，等确认（小一修理解层）。
+
+        翻译永远用**用户原话**（user_message），不用模型转写的 instruction——
+        被转写的句子会丢「一句多个方案」的完整语境，而引擎本来就能从原话里
+        识别复合需求。instruction 只在原话缺失时兜底，scenarios 只作直通场景的
+        专用输入（一修编译层遗形，小一修引擎不需要）。
+        """
         instruction = str(arguments.get("instruction") or "").strip()
-        if not instruction:
+        scenarios = [str(s or "").strip() for s in (arguments.get("scenarios") or []) if str(s or "").strip()]
+        translate_text = self.user_message or instruction or "；".join(scenarios)
+        if not translate_text:
             return self._envelope(
                 "clarify",
                 {"message": "还需要一句明确的排程变更，例如「船租涨两成」「最多修 8 个」。",
@@ -1646,7 +1653,7 @@ class AgentToolbox:
                 warnings=["槽位引擎未注入。"],
             )
         try:
-            turn = self.yx_engine.say(instruction, timeout=90)
+            turn = self.yx_engine.say(translate_text, timeout=90)
         except Exception as exc:  # noqa: BLE001
             return self._as_contract(self._envelope(
                 "clarify", {"message": f"这句没接：{exc}"},
@@ -1665,7 +1672,7 @@ class AgentToolbox:
             preview = ("将按这些方案分别排：\n" + "\n".join(f"- {lab}" for lab in labels)
                        + "\n\n确认后并发求解，全部算完再对比。")
             payload = {"kind": "batch", "scenarios": scenarios,
-                       "sourcePrompt": instruction,
+                       "sourcePrompt": translate_text,
                        "utterance": self.user_message or instruction,
                        "preview": preview}
             self.pending_change = payload
@@ -1684,7 +1691,7 @@ class AgentToolbox:
             payload = {"kind": "clarify",
                        "groups": serialize_clarify_groups(turn.澄清),
                        "chosen": [], "nextIndex": 0,
-                       "sourcePrompt": instruction}
+                       "sourcePrompt": translate_text}
             self.pending_change = payload
             if self.on_pending_change:
                 self.on_pending_change(payload)
@@ -1710,7 +1717,7 @@ class AgentToolbox:
         preview = "\n".join(lines)
         payload = {
             "kind": "yx",
-            "sourcePrompt": instruction,
+            "sourcePrompt": translate_text,
             "utterance": self.user_message or instruction,
             "preview": preview,
         }

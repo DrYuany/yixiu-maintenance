@@ -104,3 +104,40 @@ def test_solve_unparseable_still_clarifies_and_clears():
     result = toolbox._solve_inner_cleared({"instruction": "随便说说"})
     assert result.get("status") == "clarify"
     assert toolbox.pending_change is None
+
+
+def test_solve_translates_user_message_not_instruction():
+    """模型转写会磨损语境（丢掉「分别排然后对比」），引擎必须拿用户原话翻译。"""
+    captured = {}
+
+    def say(text, timeout=90):
+        captured["text"] = text
+        return _turn(场景=[{"标签": "经济优先", "patches": [_patch("p1")]}])
+
+    engine = SimpleNamespace(say=say, session=SimpleNamespace(summary=lambda: []))
+    toolbox, persisted = _toolbox(engine)
+    result = toolbox._solve_inner(
+        {"instruction": "改成经济优先", "scenarios": ["经济优先", "严重性优先"]})
+    assert captured["text"] == "只完成前五个任务"  # user_message 优先于模型转写
+    assert result.get("status") == "needs_confirmation"
+    payload = persisted[0]
+    assert payload["kind"] == "batch" and payload["sourcePrompt"] == captured["text"]
+
+
+def test_solve_falls_back_to_instruction_without_user_message():
+    captured = {}
+
+    def say(text, timeout=90):
+        captured["text"] = text
+        return _turn(新增=[{"字段": "x"}], echo=lambda: ["- echo"])
+
+    engine = SimpleNamespace(say=say, session=SimpleNamespace(summary=lambda: []))
+    toolbox = AgentToolbox(
+        conversation_id="c1",
+        versions=SimpleNamespace(list_by_conversation=lambda cid: []),
+        model_artifacts=None,
+        yx_engine=engine,
+        user_message="",
+    )
+    toolbox._solve_inner({"instruction": "船租涨两成"})
+    assert captured["text"] == "船租涨两成"
