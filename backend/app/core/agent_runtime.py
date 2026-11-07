@@ -431,10 +431,12 @@ class AgentRuntime:
         return reply
 
     def _yx_route(self, conversation_id: str, content: str, selected_version_id: str | None, sink):
-        """小一修入口：查询走一修的确定性路由，改排程走 yxcore 槽位引擎。
+        """小一修入口（单循环）：LLM 工具循环是唯一理解者。
 
-        一修和小一修唯一该有区别的是「理解层」——这里只替换理解层，
-        查询（告警/现场/环境/模型问题/对比）、记忆、版本、结果归一化仍共用一修的。
+        一修和小一修唯一该有区别的是「理解层」——所有消息先进循环，
+        模型自主决定：读工具答查询，或者调 solve（其内部就是 yxcore 填槽）。
+        过去的词表路由（detect_operations/detect_model/对比）与槽位直通
+        整体降格为降级险 `_deterministic_route`。
         """
         conversation = self.conversations.get(conversation_id)
         if not conversation:
@@ -513,7 +515,38 @@ class AgentRuntime:
                 self._clear_persisted_pending(conversation_id)
                 return self._start_planning_solve(conversation_id, pending, memory, sink)
 
-        # 1. 查询：确定性路由（复用一修查询层）
+        # 1. LLM 工具循环：唯一理解者。改排程 = 模型决定调 solve（solve 内部
+        #    就是 yxcore 填槽）；查询 = 模型按工具说明自主读数据。词表会漏接
+        #    （「1-10号风机有故障么」实锤）、会腐烂，不许再住在循环前面。
+        if self.conversation_agent.enabled:
+            try:
+                reply = self._answer_with_conversation_agent(
+                    conversation_id=conversation_id,
+                    content=content,
+                    history=self.messages.list_by_conversation(conversation_id),
+                    memory=memory,
+                    selected_version=selected_version,
+                    sink=sink,
+                )
+                return self._finalize_loop_response(conversation_id, reply, memory)
+            except ConversationAgentError as exc:
+                self._note_degradation(
+                    "agent_unavailable",
+                    "模型这一轮没答上来，下面是规则兜底生成的答复，可能不如模型答得全。",
+                    str(exc),
+                )
+
+        # 2. 降级险：key 未配或循环挂掉才走到这里。跨工具顺序/事实性回答全部保留。
+        return self._deterministic_route(conversation_id, content, selected_version, memory, sink)
+
+    def _deterministic_route(self, conversation_id, content, selected_version, memory, sink):
+        """降级险：原确定性路由整体降格为兜底。
+
+        单循环后的铁律：这里只是「循环不可用时的保底」，不是主路，也不该回头
+        优化成主路——词表命中即 return 曾把数学模型问句顶成兜底文案，也曾漏接
+        「1-10号风机有故障么」；这两件事都要靠循环+评测兜底，不靠扩词表。
+        """
+        # 查询：确定性路由（复用一修查询层）
         operations_question = detect_operations_question(content)
         if operations_question:
             kind, scope = operations_question
@@ -541,16 +574,13 @@ class AgentRuntime:
             # 有方案：结构问句升级成该版公式问句（一修同名语义）。
             if model_question == "structure":
                 model_question = "formula"
-            if model_question in {"parameter", "status"}:
-                return self._answer_model_question(conversation_id, content, model_question, selected_version, memory)
-            # formula：进 LLM 工具循环，让 read_versions(include=model) 给出真模型；
-            # 循环答不上才降级到确定性 _answer_model_question。
-            return self._answer_agent_question(conversation_id, content, model_question, selected_version, memory, sink=sink)
+            # 降级没有循环可走：模型问句直接按产物档案作答（如实规则兜底）。
+            return self._answer_model_question(conversation_id, content, model_question, selected_version, memory)
         compare_reply = self._compare_versions_reply(conversation_id, content, selected_version)
         if compare_reply is not None:
             return self._finalize_response(conversation_id, compare_reply, "version_compare", memory.activeView, [])
 
-        # 2. 改排程优先：yxcore 槽位翻译（可靠、确定性填槽）。翻不出旋钮（=不是排程约束）→ LLM 问答。
+        # yxcore 槽位翻译直通（可靠、确定性填槽）。翻不出旋钮（=不是排程约束）→ 如实回显。
         engine = self._yx_engine(conversation_id)
         if sink:
             sink.stage("translate", "理解：翻译成槽位补丁", "running")
@@ -575,6 +605,7 @@ class AgentRuntime:
                         for lab, sc in zip(labels, scenarios)
                     ],
                     "sourcePrompt": content,
+                    "preview": preview,
                 }
                 self._persist_agent_pending(conversation_id, payload)
                 return self._finalize_response(conversation_id, preview, "batch_preview", memory.activeView, [])
@@ -595,20 +626,8 @@ class AgentRuntime:
                 )
             is_change = bool(turn.新增 or turn.修订 or turn.撤销) and not turn.错误 and not turn.拒绝
             if not is_change:
-                # 不是排程约束（问题/开放问句/越界）→ 复用一修的 LLM 工具循环答
-                if self.conversation_agent.enabled:
-                    try:
-                        reply = self._answer_with_conversation_agent(
-                            conversation_id=conversation_id,
-                            content=content,
-                            history=self.messages.list_by_conversation(conversation_id),
-                            memory=memory,
-                            selected_version=selected_version,
-                            sink=sink,
-                        )
-                        return self._finalize_response(conversation_id, reply, "assistant_reply", memory.activeView, [])
-                    except ConversationAgentError as exc:
-                        self._note_degradation("agent_unavailable", "模型这一轮没答上来。", str(exc))
+                # 不是排程约束（问题/开放问句/越界）。降级路径不再借循环：
+                # 循环刚在这里失败过，二次重试只会拖时间；如实回显即可。
                 text = "\n".join(f"- {line}" for line in echo)
                 action = "change_rejected" if turn.拒绝 else "assistant_reply"
                 return self._finalize_response(conversation_id, text, action, memory.activeView, [])
@@ -624,7 +643,7 @@ class AgentRuntime:
             self._persist_agent_pending(conversation_id, payload)
             return self._finalize_response(conversation_id, preview, "change_preview", memory.activeView, [])
 
-        # 3. 兜底：模型不可用，如实回显
+        # 兜底：翻译层不可用，如实回显
         return self._finalize_response(conversation_id, "这句没接：没有对应的旋钮。", "change_rejected", memory.activeView, [])
 
     def batch_progress(self, conversation_id: str) -> dict[str, int] | None:
@@ -1359,63 +1378,6 @@ class AgentRuntime:
         except Exception as exc:  # noqa: BLE001
             lines.append(f"（结果层对比失败：{exc}）")
         return "\n\n".join(lines)
-
-    def _answer_agent_question(
-        self,
-        conversation_id: str,
-        content: str,
-        question_kind: str,
-        version,
-        memory,
-        sink=None,
-    ) -> AgentResponse:
-        """模型问句（formula）：走 LLM 工具循环，用真产物回答数学模型。
-
-        与一修同名同语义：先看产物在不在；在就进循环让 read_versions(include=model)
-        透传 markdown/latex；循环答不上降级到确定性 _answer_model_question，
-        并如实标注这次是规则兜底。
-        """
-        artifact = self.get_model_artifact(version.id)
-        if question_kind in {"formula", "parameter"} and not artifact:
-            return self._answer_model_question(
-                conversation_id, content, question_kind, version, memory,
-            )
-        history = self.messages.list_by_conversation(conversation_id)
-        try:
-            reply = self._answer_with_conversation_agent(
-                conversation_id=conversation_id,
-                content=content,
-                history=history,
-                memory=memory,
-                selected_version=version,
-                sink=sink,
-            )
-        except ConversationAgentError as exc:
-            self._note_degradation(
-                "model_question_fallback",
-                "模型没能解释这个问题，下面是从模型产物直接读出来的答案。",
-                str(exc),
-            )
-            return self._answer_model_question(
-                conversation_id, content, question_kind, version, memory,
-            )
-        memory = self.memories.get_or_create(conversation_id)
-        self.memories.apply_patch(
-            memory,
-            {
-                "currentGoal": content,
-                "currentIntent": f"model_{question_kind}",
-                "latestResultId": version.id,
-                "selectedVersionIds": [version.id],
-            },
-        )
-        return self._finalize_response(
-            conversation_id,
-            reply,
-            f"model_{question_kind}",
-            memory.activeView,
-            [],
-        )
 
     def _finalize_loop_response(self, conversation_id, reply, memory):
         """循环出口：模型这轮调过 solve 时按其结构化结果定 actionType。
