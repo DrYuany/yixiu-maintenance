@@ -420,6 +420,15 @@ class AgentRuntime:
             on_token=sink.token if sink else None,
             on_status=sink.status if sink else None,
         )
+        # 一修式 pending 收尾（参照一修 agent_runtime 1753-1757）：这一轮动过
+        # 待确认但最后没剩下，就把上一轮遗留的那份作废——不然下一句「确认」
+        # 派出的还是上一句留下的变更，用户确认的和他以为的不是同一件事。
+        if toolbox.pending_touched:
+            if toolbox.pending_change:
+                self._persist_agent_pending(conversation_id, toolbox.pending_change)
+            else:
+                self._clear_persisted_pending(conversation_id)
+        return reply
 
     def _yx_route(self, conversation_id: str, content: str, selected_version_id: str | None, sink):
         """小一修入口：查询走一修的确定性路由，改排程走 yxcore 槽位引擎。
@@ -1407,6 +1416,35 @@ class AgentRuntime:
             memory.activeView,
             [],
         )
+
+    def _finalize_loop_response(self, conversation_id, reply, memory):
+        """循环出口：模型这轮调过 solve 时按其结构化结果定 actionType。
+
+        判定不重猜——pendingChange 是 solve 工具刚落库的事实（on_pending_change
+        幂等：落库发生在工具里，这里只把 reply 与结构一起送进响应）。
+        不转换的话，改排程预览/澄清/批量场景都会顶着 assistant_reply 混掉区别。
+        """
+        latest = self.memories.get_or_create(conversation_id)
+        pending = (latest.activeFilters or {}).get("pendingChange")
+        if isinstance(pending, dict):
+            kind = pending.get("kind")
+            if kind == "yx":
+                return self._finalize_response(
+                    conversation_id, reply, "change_preview", latest.activeView, [])
+            if kind == "batch":
+                return self._finalize_response(
+                    conversation_id,
+                    str(pending.get("preview") or reply),
+                    "batch_preview", latest.activeView, [])
+            if kind == "clarify":
+                groups = pending.get("groups") or []
+                if groups:
+                    text, options = self._clarify_group_text(groups[0], 0, len(groups))
+                    return self._finalize_response(
+                        conversation_id, text, "clarification", latest.activeView,
+                        [], clarification_options=options)
+        return self._finalize_response(
+            conversation_id, reply, "assistant_reply", latest.activeView, [])
 
     def get_job(self, job_id: str):
         if not self.jobs:
