@@ -22,6 +22,9 @@ WHOLE_DIRS = (
     "dsl_core",
     "maintenance-milp-modeler",
     "llm-first/src",
+    # 小一修的理解层。backend/app/core/yx_engine.py 在模块顶层就 import
+    # yxcore.session，漏掉这一项线上会直接 ImportError 起不来。
+    "yxcore",
 )
 # build 只要最终那个单文件：make-standalone 已经把 JS/CSS/字体全内联进去了，
 # assets/ 是 Vite 中间产物，index.html 里没有任何 assets/ 引用，带上纯属浪费上行带宽。
@@ -32,6 +35,34 @@ DATA_DIRS = ("phase1-demo", "模型参数", "场景评测/五组基座数据")
 SKIP_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".git", "node_modules"}
 SKIP_SUFFIX = {".pyc", ".pyo"}
 SKIP_FILES = {".env.local"}
+
+# 云端启动入口。发布平台把 startCmd 直接交给进程执行、不经过 shell，
+# 命令里写 `--port $PORT` 时 `$PORT` 会原样传给 uvicorn，报
+# 「Option '--port' requires an argument」，服务永远起不来。
+# 改由 Python 自己读环境变量，端口是多少就跟到多少，不写死。
+SERVE_PY = '''"""云端启动入口：从 PORT 环境变量读端口并绑定 0.0.0.0。"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+sys.path[:0] = [str(ROOT), str(ROOT / "backend")]
+
+import uvicorn  # noqa: E402
+from app.main import app  # noqa: E402
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "3000")),
+        log_level="warning",
+    )
+'''
+
 
 
 def ignore(_dir: str, names: list[str]) -> set[str]:
@@ -117,7 +148,26 @@ def write_runtime_env() -> None:
     (OUT / ".env.local").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def check_standalone() -> None:
+    """上云只带 site/index.html，必须先确认它已经把 JS/CSS/字体全内联。
+
+    只跑 `vite build` 不跑 make-standalone 时，index.html 会引用 ./assets/，
+    而 BUILD_ITEMS 不带 assets/ —— 发布出去就是一片白屏，且健康检查照样通过，
+    很难从线上症状反推。宁可在打包这一步就拦下。
+    """
+    index = ROOT / "build" / "index.html"
+    if not index.exists():
+        raise SystemExit("找不到 build/index.html，先执行：npm run build")
+    text = index.read_text(encoding="utf-8")
+    if "./assets/" in text:
+        raise SystemExit(
+            "build/index.html 还在引用 ./assets/（Vite 原始产物），部署包只带"
+            " index.html，上线会白屏。先执行：npm run build"
+        )
+
+
 def main() -> None:
+    check_standalone()
     wipe(OUT)
     OUT.mkdir()
 
@@ -151,6 +201,7 @@ def main() -> None:
         shutil.copy2(req, OUT / "requirements.txt")
 
     write_runtime_env()
+    (OUT / "serve.py").write_text(SERVE_PY, encoding="utf-8")
 
     total = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
     count = sum(1 for f in OUT.rglob("*") if f.is_file())
@@ -159,8 +210,8 @@ def main() -> None:
     print("  体验额度：免费 10 轮/访客，全局每日 300 轮，超过要求自带 DeepSeek 密钥")
     print("  服务端密钥：已随 .env.local 打包，只用于免费轮次")
     print()
-    print("  启动命令（平台注入 PORT）：")
-    print("    python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT")
+    print("  启动命令（平台注入 PORT，由 serve.py 读）：")
+    print("    python serve.py")
     print()
 
 

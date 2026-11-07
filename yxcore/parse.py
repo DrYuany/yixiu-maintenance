@@ -126,7 +126,13 @@ def _parse_clarify(payload: dict[str, Any]) -> list[dict] | None:
                 intent = str(c.get("意图") or c.get("label") or c.get("name") or "").strip()
                 pats = _patches(c.get("patches") or c.get("补丁"))
                 if intent or pats:
-                    cands.append({"意图": intent, "patches": pats})
+                    cand: dict[str, Any] = {"意图": intent, "patches": pats}
+                    # 硬/软标签与推荐位要一路带到界面：绝对优先那条必须看得出来是硬约束
+                    if c.get("性质"):
+                        cand["性质"] = str(c["性质"])
+                    if "推荐" in c:
+                        cand["推荐"] = bool(c["推荐"])
+                    cands.append(cand)
             groups.append({"问": question, "候选": cands})
         else:
             # 旧平铺形式：一条候选，包成一个单候选组
@@ -163,21 +169,32 @@ def _parse_scenarios(payload: dict[str, Any]) -> list[dict] | None:
     return result or None
 
 
-def translate(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
-              extra: str = "", timeout: float = 90.0,
-              session_text: str = "") -> tuple[list[Patch], str | None, list[dict] | None, list[dict] | None]:
-    """把一句话翻译成补丁集。返回 (补丁, 拒绝理由, 澄清候选, 复合场景)。
+def _translate_core(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
+                    extra: str = "", timeout: float = 90.0,
+                    session_text: str = "") -> tuple[list[Patch], str | None, list[dict] | None,
+                                                     list[dict] | None, list[str]]:
+    """翻译成补丁集，并在出口做一次「绝对优先 → 硬约束」的形状复核。
+
+    返回 (补丁, 拒绝理由, 澄清候选, 复合场景, 回显提示)。提示由会话层摆给用户看：
+    改了什么、为什么改，不静默改。
 
     拒绝理由非空表示模型认为这句话做不到（边界清单里的一类）——这是**诚实的拒绝**，
-    调用方要原样转述给用户，不许拿近似槽位补上。
+    调用方要原样转述给用户，不许拿近似槽位补上。但「高危必须全修」不在此列：
+    它能用 count_min 硬约束表达，模型判做不到时这里会自己补出来。
 
-    澄清候选非空表示模型听懂了这句话，但**指代/范围/顺序不清**（如前N个、最早N个没说
-    按什么排序）。此时不猜唯一解，而是枚举候选解释、各带一条能落地的补丁，让用户点选。
-    形如 ``[{"意图": str, "patches": [Patch...]}, ...]``；旧字符串形式则退化成开放式反问。
+    澄清候选非空表示模型听懂了这句话，但**指代/范围/顺序/硬软强度不清**。此时不猜
+    唯一解，而是枚举候选解释、各带一条能落地的补丁让用户点选；硬约束那条排在第一个
+    并标「推荐」。旧字符串形式则退化成开放式反问。
 
     ``session_text`` 是多轮时上一段的「当前已生效旋钮」清单：模型靠它才能把
     「刚才那条去掉」落成同一个格子的 reset，否则只能凭记忆重写索引（十次有九次跑偏）。
+
+    复核为什么放在这里而不是校验器：校验器只认补丁形状，不认「这句话该怎么翻译」；
+    脚本手搓、回归 gold、多轮里已落地的补丁都直接进校验器，给它们套语义规则会把
+    一批合法用例判死。只有大模型刚吐出来的这一批才需要复核。
     """
+    from . import absolute  # noqa: PLC0415
+
     system = build_prompt(data, options, extra=extra, session_text=session_text)
     user = "\n".join([
         f"规划期：{data.stamp(0)[:10]} ~ {data.stamp(data.end)[:10]}",
@@ -198,12 +215,19 @@ def translate(utterance: str, data, options: dict[str, list[dict]] | None = None
     scenarios = _parse_scenarios(payload)
     if scenarios:
         # 复合需求：N 套独立补丁，各跑一份再对比
-        return [], None, None, scenarios
+        return [], None, None, scenarios, []
     items = payload.get("patches") or payload.get("补丁") or []
     if not items:
         if clarify:
-            return [], None, clarify, None
-        return [], reason or "大模型没有给出任何补丁", None, None
+            return [], None, absolute.enrich_clarification(utterance, clarify, data, options), None, []
+        # 「高风险的必须全修」历史上常被当成表达不了而拒掉（错误分类学 E4.3）。
+        # 它其实能表达：count_min 硬约束。模型说做不到时不跟着拒，先自己复核一遍。
+        outcome = absolute.enforce(utterance, [], data, options)
+        if outcome.patches and not outcome.clarify:
+            notes = [f"模型把这句判成做不到，但「{utterance}」可以落成硬约束，已按硬约束处理"] \
+                + outcome.notes
+            return outcome.patches, None, None, None, notes
+        return [], reason or "大模型没有给出任何补丁", outcome.clarify, None, outcome.notes
     patches: list[Patch] = []
     errors: list[str] = []
     for item in items:
@@ -225,7 +249,39 @@ def translate(utterance: str, data, options: dict[str, list[dict]] | None = None
                 f"这句话里有一条我没读懂（{detail}）。整句先没执行——"
                 "请再说一遍，或者把它拆成两句")
         raise LLMUnavailable(detail)
-    return patches, reason, clarify, None
+    outcome = absolute.enforce(utterance, patches, data, options)
+    if outcome.clarify:
+        # 语义含糊：不落补丁，把硬/软两条解释摆出来让人选
+        return [], None, outcome.clarify, None, outcome.notes
+    if clarify:
+        clarify = absolute.enrich_clarification(utterance, clarify, data, options)
+    return outcome.patches, reason, clarify, None, outcome.notes
+
+
+def translate(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
+              extra: str = "", timeout: float = 90.0, session_text: str = "",
+              notes_out: list[str] | None = None
+              ) -> tuple[list[Patch], str | None, list[dict] | None, list[dict] | None]:
+    """把一句话翻译成补丁集。返回 (补丁, 拒绝理由, 澄清候选, 复合场景)。
+
+    兼容入口：评测、脚本、外部调用方拿的还是四元组。会话层把 ``notes_out`` 传进来
+    就能收到「这句按硬约束处理了」这类回显提示；不传不影响旧调用方。
+    两边共用同一份复核逻辑，不存在「从哪条路进来行为不同」。
+    """
+    patches, reason, clarify, scenarios, notes = _translate_core(
+        utterance, data, options, extra=extra, timeout=timeout, session_text=session_text)
+    if notes_out is not None:
+        notes_out.extend(notes)
+    return patches, reason, clarify, scenarios
+
+
+def translate_full(utterance: str, data, options: dict[str, list[dict]] | None = None, *,
+                   extra: str = "", timeout: float = 90.0,
+                   session_text: str = "") -> tuple[list[Patch], str | None, list[dict] | None,
+                                                    list[dict] | None, list[str]]:
+    """同 ``translate``，但把回显提示作为第五项直接返回。"""
+    return _translate_core(utterance, data, options, extra=extra, timeout=timeout,
+                           session_text=session_text)
 
 
 def translate_and_validate(utterance: str, data, options: dict[str, list[dict]] | None = None, *,

@@ -170,7 +170,10 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
             # 是 5 分钟算不出来的主因。要绝对优先时用 count_min/count_max 硬约束表达，
             # 不靠目标分层（分层+加权见 agent_tools 的对比指令，仍有显式 mode 入口）。
             request.mode = request.mode or "加权"
-            request.echo.append(f"目标策略按「{value}」")
+            # 加权/分层都只是目标：允许跟成本折中，不构成「这一类必须修」的保证。
+            # 不写清楚，用户会把「目标策略按高风险优先」当成高危已锁死。
+            request.echo.append(
+                f"目标策略按「{value}」（目标偏好，可与成本折中；不保证某一类任务一定排进去）")
             continue
 
         # ── G 组预算：现金/总成本走内核 limits ──
@@ -300,6 +303,9 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
         # ── 其余走注入口的族：统一回显「按什么处理的」 ──
         # 强度回显是硬软消歧的落点（决策 D3）：不替用户猜，但要把判的结果摆出来让他能纠正。
         strength_word = {"hard": "硬性要求", "soft": "软性偏好", "unsure": "强度待确认"}[patch.strength]
+        if patch.slot in ("count_min", "count_max") and patch.strength == "hard":
+            # 硬约束写进可行域，目标函数无权拿它跟成本做交易；跟软性偏好区分开
+            strength_word = "硬性要求·写进可行域，成本换不掉"
         cells = "，".join(
             f"{k}={v.get('value') if v.get('value') is not None else v.get('kind')}"
             for k, v in patch.index.items() if isinstance(v, dict)
