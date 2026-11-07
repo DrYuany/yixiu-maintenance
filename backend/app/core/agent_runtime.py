@@ -26,7 +26,7 @@ from app.core.conversation_memory import (
     build_memory_snapshot,
 )
 from app.core.demo_access import begin_llm_turn, end_llm_turn
-from app.core.agent_tools import AgentToolbox
+from app.core.agent_tools import AgentToolbox, serialize_clarify_groups
 from app.core.conversation_agent import ConversationAgent, ConversationAgentError
 from app.core.yx_engine import YxEngine, _SOLVE_SECONDS
 from app.core.model_query import (
@@ -767,17 +767,8 @@ class AgentRuntime:
 
     @staticmethod
     def _serialize_clarify_groups(groups):
-        """把 yxcore 的问题组（含 Patch 对象）序列化成可持久化的 JSON。"""
-        return [{
-            "问": g.get("问") or "",
-            "候选": [
-                {"意图": c.get("意图") or "",
-                 # 硬/软标签要随待确认状态一起存下来：下一轮渲染选项时还要用
-                 "性质": c.get("性质"), "推荐": c.get("推荐"),
-                 "patches": [p.to_json() for p in (c.get("patches") or [])]}
-                for c in (g.get("候选") or [])
-            ],
-        } for g in groups or []]
+        """委托工具层的共享实现（与 solve 工具产出的 payload 必须同构）。"""
+        return serialize_clarify_groups(groups)
 
     @staticmethod
     def _clarify_label(cand: dict, index: int) -> str:

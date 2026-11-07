@@ -138,6 +138,24 @@ def _fmt_value(value: Any, unit: str | None = None) -> str:
     return f"{text} {unit}" if unit else text
 
 
+def serialize_clarify_groups(groups):
+    """把 yxcore 的问题组（含 Patch 对象）序列化成可持久化的 JSON。
+
+    模块级共享：路由直通（AgentRuntime._serialize_clarify_groups）与 solve 工具
+    产出的 kind=clarify payload 都要长一个样，pendingChange 状态机只认一种格式。
+    """
+    return [{
+        "问": g.get("问") or "",
+        "候选": [
+            {"意图": c.get("意图") or "",
+             # 硬/软标签要随待确认状态一起存下来：下一轮渲染选项时还要用
+             "性质": c.get("性质"), "推荐": c.get("推荐"),
+             "patches": [p.to_json() for p in (c.get("patches") or [])]}
+            for c in (g.get("候选") or [])
+        ],
+    } for g in groups or []]
+
+
 class AgentToolbox:
     """Read-only facts for one conversation, exposed to the conversational agent."""
 
@@ -1596,7 +1614,9 @@ class AgentToolbox:
         """
         self.pending_touched = True
         result = self._solve_inner(arguments)
-        if result.get("status") != "needs_confirmation":
+        # needs_confirmation（变更/批量场景）和 clarify（澄清点选）都要留下
+        # 状态给用户；其余出口不算产出，把上一轮遗留的待确认一起作废。
+        if result.get("status") not in {"needs_confirmation", "clarify"}:
             self.pending_change = None
         return result
 
@@ -1632,6 +1652,49 @@ class AgentToolbox:
                 "clarify", {"message": f"这句没接：{exc}"},
             ))
         echo = turn.echo()
+        # 复合需求 → N 套场景 → 批量预览 → 确认后并发求解。与路由直通版同构：
+        # pendingChange kind=batch，消费方是 runtime 的 _start_batch_solve，
+        # preview 存进 payload 供循环出口直接取用。
+        if turn.场景:
+            scenarios = [
+                {"标签": str(sc.get("标签") or f"方案{i + 1}"),
+                 "patches": [p.to_json() for p in sc.get("patches") or []]}
+                for i, sc in enumerate(turn.场景)
+            ]
+            labels = [sc["标签"] for sc in scenarios]
+            preview = ("将按这些方案分别排：\n" + "\n".join(f"- {lab}" for lab in labels)
+                       + "\n\n确认后并发求解，全部算完再对比。")
+            payload = {"kind": "batch", "scenarios": scenarios,
+                       "sourcePrompt": instruction,
+                       "utterance": self.user_message or instruction,
+                       "preview": preview}
+            self.pending_change = payload
+            if self.on_pending_change:
+                self.on_pending_change(payload)
+            return self._envelope(
+                "needs_confirmation",
+                {"preview": preview, "markdown": preview, "verbatim": True,
+                 "requiresUserConfirmation": True},
+                next_actions=["等待用户确认；确认后将并发求解全部场景并对比。"],
+            )
+        # 指代/范围/顺序不清 → 枚举候选让用户点选。pendingChange kind=clarify
+        # 由 runtime 的多问状态机接管（序号选择、累积补丁、「都不是我重新说」出口），
+        # envelope 绿本只占位：澄清正文与可点选项由 runtime _clarify_group_text 渲染。
+        if turn.澄清:
+            payload = {"kind": "clarify",
+                       "groups": serialize_clarify_groups(turn.澄清),
+                       "chosen": [], "nextIndex": 0,
+                       "sourcePrompt": instruction}
+            self.pending_change = payload
+            if self.on_pending_change:
+                self.on_pending_change(payload)
+            return self._envelope(
+                "clarify",
+                {"message": "这句要澄清几个问题，下面列出候选请你选。",
+                 "markdown": "这句要澄清几个问题，下面列出候选请你选。",
+                 "verbatim": True, "requiresUserConfirmation": False},
+                next_actions=["等待用户点选澄清候选。"],
+            )
         if turn.错误 or turn.拒绝 or not (turn.新增 or turn.修订 or turn.撤销):
             text = "\n".join(f"- {line}" for line in echo)
             return self._as_contract(self._envelope(
