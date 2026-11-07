@@ -33,8 +33,12 @@ def evaluate_behavior(case: dict[str, Any], response: dict[str, Any] | None) -> 
     expected_action = case.get("期望action")
     if expected_action:
         actual = response.get("actionType")
-        result.add("action", actual == expected_action,
-                   f"期望 {expected_action}，得到 {actual}")
+        # 备选：路由迁移到 LLM 工具循环后，同一句话的 actionType 会变
+        #（如查询桶 alarm_answer → assistant_reply）。判分认「谁答的」，不认「谁想的」。
+        allowed = {expected_action} | set(case.get("期望action备选") or [])
+        alternatives = "、".join(sorted(allowed - {expected_action})) or "无"
+        result.add("action", actual in allowed,
+                   f"期望 {expected_action}（备选 {alternatives}），得到 {actual}")
 
     content = ((response.get("assistantMessage") or {}).get("content") or "")
     for kw in case.get("期望关键词") or []:

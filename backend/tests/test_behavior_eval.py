@@ -45,3 +45,22 @@ def test_behavior_no_regression() -> None:
     tracker = BaselineTracker(BASELINE_PATH)
     regressions = tracker.regressions(report, tracker.load())
     assert not regressions, f"行为评测退化：{', '.join(regressions)}"
+
+
+def test_action_alternative_accepts_loop_reply() -> None:
+    """查询桶双归属：删词表路由后同一句在线会变成 assistant_reply（由循环答），判分必须认。"""
+    from app.evals.behavior_eval import evaluate_behavior
+
+    case = {"id": "t", "期望action": "alarm_answer", "期望action备选": ["assistant_reply"]}
+    result = evaluate_behavior(case, {"actionType": "assistant_reply",
+                                      "assistantMessage": {"content": "ok"}})
+    assert result.passed
+
+
+def test_action_alternative_still_rejects_wrong() -> None:
+    from app.evals.behavior_eval import evaluate_behavior
+
+    case = {"id": "t", "期望action": "alarm_answer", "期望action备选": ["assistant_reply"]}
+    result = evaluate_behavior(case, {"actionType": "change_preview",
+                                      "assistantMessage": {"content": "ok"}})
+    assert not result.passed

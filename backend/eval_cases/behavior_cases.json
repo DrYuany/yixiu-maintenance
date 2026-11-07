@@ -3,7 +3,9 @@
   {"id": "chg-002", "桶": "改排程", "话术": "先修严重方案", "期望action": "change_preview", "期望关键词": ["高风险优先抢修"]},
   {"id": "clar-001", "桶": "指代消解", "话术": "只完成前五个任务", "期望action": "clarification", "期望选项数": 2},
   {"id": "comp-001", "桶": "复合", "话术": "按经济优先和严重性优先分别排然后对比", "期望action": "batch_preview"},
-  {"id": "q-alarm-001", "桶": "查询", "话术": "有哪些告警", "期望action": "alarm_answer"},
-  {"id": "q-alarm-002", "桶": "查询", "话术": "1-10号风机有故障么", "期望action": "alarm_answer"},
-  {"id": "q-cap-001", "桶": "查询", "话术": "有哪些策略", "期望action": "capability_answer"}
+  {"id": "q-alarm-001", "桶": "查询", "话术": "有哪些告警", "期望action": "alarm_answer", "期望action备选": ["assistant_reply"]},
+  {"id": "q-alarm-002", "桶": "查询", "话术": "1-10号风机有故障么", "期望action": "alarm_answer", "期望action备选": ["assistant_reply"], "期望关键词": ["任务"]},
+  {"id": "q-alarm-003", "桶": "查询", "话术": "最近三天新收了哪些告警", "期望action": "alarm_answer", "期望action备选": ["assistant_reply"], "期望关键词": ["告警"]},
+  {"id": "q-env-001", "桶": "查询", "话术": "未来一周风况怎么样，适不适合出海", "期望action": "environment_answer", "期望action备选": ["assistant_reply"], "期望关键词": ["风速"]},
+  {"id": "q-cap-001", "桶": "查询", "话术": "有哪些策略", "期望action": "capability_answer", "期望action备选": ["assistant_reply"]}
 ]
