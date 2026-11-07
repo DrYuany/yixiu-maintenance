@@ -519,19 +519,24 @@ class AgentRuntime:
                 return self._answer_environment_question(conversation_id, content, memory, selected_version)
             if model_question == "structure" and not selected_version:
                 return self._answer_structure_question(conversation_id, content, memory)
-            if selected_version:
-                if model_question in {"parameter", "status"}:
-                    return self._answer_model_question(conversation_id, content, model_question, selected_version, memory)
+            if not selected_version:
+                if model_question == "parameter":
+                    return self._answer_operations_question(
+                        conversation_id, content, "site", "parameters", selected_version, memory, sink=sink,
+                    )
                 return self._finalize_response(
                     conversation_id,
-                    "小一修是槽位填表模型，不生成自定义公式或约束；当前策略、目标与排程见方案卡。",
-                    "model_query", memory.activeView, [],
+                    "当前会话还没有可查询的排程方案。请先生成方案，之后我才能解释模型、参数或结果。",
+                    "model_query_empty", memory.activeView, [],
                 )
-            return self._finalize_response(
-                conversation_id,
-                "当前会话还没有可查询的排程方案。请先生成方案，之后我才能解释模型、参数或结果。",
-                "model_query_empty", memory.activeView, [],
-            )
+            # 有方案：结构问句升级成该版公式问句（一修同名语义）。
+            if model_question == "structure":
+                model_question = "formula"
+            if model_question in {"parameter", "status"}:
+                return self._answer_model_question(conversation_id, content, model_question, selected_version, memory)
+            # formula：进 LLM 工具循环，让 read_versions(include=model) 给出真模型；
+            # 循环答不上才降级到确定性 _answer_model_question。
+            return self._answer_agent_question(conversation_id, content, model_question, selected_version, memory, sink=sink)
         compare_reply = self._compare_versions_reply(conversation_id, content, selected_version)
         if compare_reply is not None:
             return self._finalize_response(conversation_id, compare_reply, "version_compare", memory.activeView, [])
@@ -739,6 +744,9 @@ class AgentRuntime:
         """把用户回复（序号或意图）匹配到某条候选；匹配不上返回 None。"""
         text = (text or "").strip()
         n = len(candidates or [])
+        # 空串不能当「匹配上了」：'' in 任意标签 恒真，会把没回答当成选了第一条
+        if not text:
+            return None
         # 序号：1 / 第1个 / 选1 / 选项1 / ①
         for i in range(n):
             if text in {str(i + 1), f"第{i + 1}个", f"第{i + 1}项", f"选{i + 1}",
@@ -749,6 +757,12 @@ class AgentRuntime:
             label = str(cand.get("意图") or "").strip()
             if label and (label in text or text in label):
                 return cand
+        # 用户直接说「硬约束」「相对偏好」也能选中对应候选；不然标签上看得见、
+        # 手打却选不中，绝对优先那条还是点不到
+        for cand in candidates:
+            nature = str(cand.get("性质") or "").strip()
+            if nature and (nature in text or text in nature):
+                return cand
         return None
 
     @staticmethod
@@ -758,15 +772,31 @@ class AgentRuntime:
             "问": g.get("问") or "",
             "候选": [
                 {"意图": c.get("意图") or "",
+                 # 硬/软标签要随待确认状态一起存下来：下一轮渲染选项时还要用
+                 "性质": c.get("性质"), "推荐": c.get("推荐"),
                  "patches": [p.to_json() for p in (c.get("patches") or [])]}
                 for c in (g.get("候选") or [])
             ],
         } for g in groups or []]
 
+    @staticmethod
+    def _clarify_label(cand: dict, index: int) -> str:
+        """选项标签要能看出「哪条是硬约束、哪条是推荐」。
+
+        绝对优先被误做成加权偏好是这一版最贵的错，界面上不能只给两个光秃秃的意图名。
+        """
+        label = str(cand.get("意图") or f"选项{index + 1}")
+        tags = []
+        if cand.get("性质"):
+            tags.append(str(cand["性质"]))
+        if cand.get("推荐"):
+            tags.append("推荐")
+        return f"{label}（{'·'.join(tags)}）" if tags else label
+
     def _clarify_group_text(self, group, group_index, total):
         """把一个问题组格式成「问题 N：… 你是想：1…2…」的正文 + 可点击选项。"""
         cands = group.get("候选") or []
-        labels = [str(c.get("意图") or f"选项{i+1}") for i, c in enumerate(cands)]
+        labels = [self._clarify_label(c, i) for i, c in enumerate(cands)]
         head = f"问题{group_index + 1}" + (f"：{group.get('问')}" if group.get("问") else "")
         if total > 1:
             head += f"（共 {total} 个问题）"
@@ -879,6 +909,12 @@ class AgentRuntime:
         version_id = f"ver_{uuid4().hex[:8]}"
         version = engine.build_version(conversation_id, content, result, version_id, solve_job_id=solve_job_id)
         self.versions.add(version)
+        # 模型产物跟着版本落库：没有它，「看数学模型」只剩下诚实地说没保存。
+        # yxcore 的求解器本来就把 model_artifact.json 写到 output 目录，
+        # pipeline.run 已经把它带进 result["模型产物"]；这里只差最后一根线。
+        artifact = result.get("模型产物")
+        if self.model_artifacts is not None and isinstance(artifact, dict) and artifact:
+            self.model_artifacts.add(version.id, version.conversationId, version.generatedAt, artifact)
         if self.candidates is not None:
             self.candidates.replace_for_version(conversation_id, version.id, version.windows)
         self.memories.apply_patch(memory, {
@@ -1323,6 +1359,63 @@ class AgentRuntime:
         except Exception as exc:  # noqa: BLE001
             lines.append(f"（结果层对比失败：{exc}）")
         return "\n\n".join(lines)
+
+    def _answer_agent_question(
+        self,
+        conversation_id: str,
+        content: str,
+        question_kind: str,
+        version,
+        memory,
+        sink=None,
+    ) -> AgentResponse:
+        """模型问句（formula）：走 LLM 工具循环，用真产物回答数学模型。
+
+        与一修同名同语义：先看产物在不在；在就进循环让 read_versions(include=model)
+        透传 markdown/latex；循环答不上降级到确定性 _answer_model_question，
+        并如实标注这次是规则兜底。
+        """
+        artifact = self.get_model_artifact(version.id)
+        if question_kind in {"formula", "parameter"} and not artifact:
+            return self._answer_model_question(
+                conversation_id, content, question_kind, version, memory,
+            )
+        history = self.messages.list_by_conversation(conversation_id)
+        try:
+            reply = self._answer_with_conversation_agent(
+                conversation_id=conversation_id,
+                content=content,
+                history=history,
+                memory=memory,
+                selected_version=version,
+                sink=sink,
+            )
+        except ConversationAgentError as exc:
+            self._note_degradation(
+                "model_question_fallback",
+                "模型没能解释这个问题，下面是从模型产物直接读出来的答案。",
+                str(exc),
+            )
+            return self._answer_model_question(
+                conversation_id, content, question_kind, version, memory,
+            )
+        memory = self.memories.get_or_create(conversation_id)
+        self.memories.apply_patch(
+            memory,
+            {
+                "currentGoal": content,
+                "currentIntent": f"model_{question_kind}",
+                "latestResultId": version.id,
+                "selectedVersionIds": [version.id],
+            },
+        )
+        return self._finalize_response(
+            conversation_id,
+            reply,
+            f"model_{question_kind}",
+            memory.activeView,
+            [],
+        )
 
     def get_job(self, job_id: str):
         if not self.jobs:

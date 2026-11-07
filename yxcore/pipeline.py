@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,18 @@ def run(
             f"这些目标没证到最优（{'、'.join(unproven)}）：方案在时限内波动，"
             "同一批旋钮换台机器排出来的内容可能不同"
         ]
+    # 模型产物：求解器真实写下的变量/约束/参数清单（model_artifact.json）。
+    # 不带它，用户问「你的数学模型」时工具层只能诚实说没保存——问句合法，
+    # 答案不该缺。读失败不拦方案：数学模型页缺这一版只能说没存上，不该炸排程。
+    artifact: dict[str, Any] | None = None
+    for artifact_name in ("model_artifact.json", "diagnostic_model_artifact.json"):
+        artifact_file = output / artifact_name
+        if artifact_file.exists():
+            try:
+                artifact = json.loads(artifact_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):  # noqa: BLE001
+                artifact = None
+            break
     return {
         "排程": selected,
         "推荐": recommended,
@@ -172,6 +185,7 @@ def run(
         "已证最优": not unproven,
         "未证最优目标": unproven,
         "请求": request,
+        "模型产物": artifact,
     }
 
 
