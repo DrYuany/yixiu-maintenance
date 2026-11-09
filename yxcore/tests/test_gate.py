@@ -76,15 +76,38 @@ def test_objective_is_applied_not_passed():
 
 
 def test_infeasible_gives_reason_with_numbers():
-    """不可行时的诊断要指认到补丁，且带得上数字，不许只说"可能冲突"。"""
-    patches = [P(slot="budget_max", op="=", value=10, utterance="租船最多10艘天",
-                 index={"口径": {"kind": "budget_口径", "value": "租船天"}})]
+    """真正被证明不可行时，诊断要指认到补丁，不许只说「可能冲突」。
+
+    用例换成「全部任务 24 号前干完」：期限收紧过的任务全部进必修名单，
+    窗口还没开就到期，求解器能证明 INFEASIBLE。预算上限那类约束在新模型里
+    已经不是不可行，改由下面那条用例判「优雅少修」。
+    """
+    patches = [P(slot="deadline_delta", op="=", value="2026-10-24T00:00:00+08:00",
+                 utterance="全部24号前干完", index={"组": {"kind": "全部"}})]
     with pytest.raises(YxError) as exc:
         run(patches, seconds=15)
     message = str(exc.value)
     assert "排不出" in message or "不可行" in message
-    assert "租船最多10艘天" in message          # 指认到具体哪一条
+    assert "全部24号前干完" in message          # 指认到具体哪一条
     assert "未能定位" not in message.split("\n")[0]
+
+
+def test_budget_shortage_is_graceful_partial_not_infeasible():
+    """资源预算不够不再让整模型不可行，少修要出解、要告警、要能逐个查 P。"""
+    patches = [P(slot="budget_max", op="=", value=10, utterance="租船最多10艘天",
+                 index={"口径": {"kind": "budget_口径", "value": "租船天"}})]
+    result = run(patches, seconds=15)
+    recommended = result["推荐"] or {}
+    total = recommended["待修总数"]
+    done = len(result["排程"])
+    assert 0 < done < total, "预算是硬约束，修几个是自由变量，不该退化成全修或零修"
+    assert result["部分排程"] is True
+    assert result["规格层允许少修"] is False, "用户没开 allow_partial，也要如实说少修了"
+    assert any(f"其余 {total - done} 个这轮不修" in w for w in result["警告"])
+    penalty = (result.get("模型产物") or {}).get("unrepairedPenalty") or {}
+    assert penalty and penalty["horizonDays"] == 14
+    assert len(penalty["records"]) == total
+    assert all(r["不修惩罚P（元）"] > 0 for r in penalty["records"])
 
 
 def test_end_to_end_reconciled_run(snapshot):

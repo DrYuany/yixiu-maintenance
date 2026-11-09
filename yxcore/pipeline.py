@@ -132,16 +132,18 @@ def run(
         # 独立复核没过：这份排程自己站不住，不能带着"复核通过"交出去
         raise YxError([f"求解结果未通过独立复核：{exc}"], warnings, code="复核") from exc
 
-    # 部分排程必须说出来：用户限制了范围/数量，就一定有几个任务这轮不修。
-    # 不吭声的话，他看到「排程成功」会以为全修了（大一修踩过这个坑）。
-    if request.partial:
-        total, done = len(data.tasks), len(selected)
-        explicit = any(p.slot == "allow_partial" and p.op != "reset" for p in patches)
-        if not explicit and done < total:
-            warnings = list(warnings) + [
-                f"这次是部分排程：{total} 个任务里排了 {done} 个，"
-                f"其余 {total - done} 个这轮不修（因为你限制了范围或数量）"
-            ]
+    # 少修了几个任务，必须原原本本说出来。以前只在 request.partial（用户显式
+    # 限制过范围/数量）时提醒；现在「本轮不修」是模型的合法分支，默认也会少修，
+    # 再按规格层开关判断就会漏报——用户看到「排程成功」会以为全修了。
+    total, done = len(data.tasks), len(selected)
+    explicit = any(p.slot == "allow_partial" and p.op != "reset" for p in patches)
+    if done < total and not explicit:
+        reason = ("因为你限制了范围或数量" if request.partial
+                  else "本轮按不修惩罚与维修成本权衡，未排任务留在台账里待后续窗口")
+        warnings = list(warnings) + [
+            f"这次是部分排程：{total} 个任务里排了 {done} 个，"
+            f"其余 {total - done} 个这轮不修（{reason}）"
+        ]
     info["策略"] = strategy
     info["权重"] = request.weights
     audit = reconcile(patches, Ctx(selected=selected, rec=recommended, data=data,
@@ -153,7 +155,13 @@ def run(
     audit_text = describe_audit(audit)
     # 状态诚实性：没证到最优就要说出来。时限内波动是求解器的正常行为，
     # 但「方案可能随机器而变」这件事必须写进产物，不能让复现性悄悄失效。
-    unproven = info.get("未达最优阶段") or []
+    # 主目标证到 OPTIMAL 不等于整份方案可复现：等价最优解之间还有「确定性
+    # 决胜」阶段，它若停在 UNKNOWN（终止原因 TIE_NOT_PROVEN），两次求解会给出
+    # 同样成本、不同船线/开工的方案。只数「未达最优阶段」会漏掉这一格，把
+    # FEASIBLE 误报成「已证最优」，复现性测试就被冤枉成缺陷。
+    unproven = list(info.get("未达最优阶段") or [])
+    if info.get("确定性决胜完成") is False:
+        unproven.append("确定性决胜")
     if unproven:
         warnings = list(warnings) + [
             f"这些目标没证到最优（{'、'.join(unproven)}）：方案在时限内波动，"
@@ -181,7 +189,9 @@ def run(
         "指纹": fp,
         "数据": data.meta,
         "警告": warnings,
-        "部分排程": request.partial,
+        # 实际有没有少修，看产物；规格层有没有开「允许少修」另存一格，别混。
+        "部分排程": done < total,
+        "规格层允许少修": request.partial,
         "已证最优": not unproven,
         "未证最优目标": unproven,
         "请求": request,

@@ -87,6 +87,14 @@ class Snapshot:
     # 已批准检修单锁定的任务：{任务编号: {开始, 窗口编号, 作业线}}。
     # 时间和作业线都不能再被新一轮规划挪动，只登记不参与自由竞争。
     locked: dict = field(default_factory=dict)
+    # 下面四项是 build_model() 每次求解现算出来的「计价上下文」，不是用户输入。
+    # 必须声明成正式字段：Store.save_run 存的是 data.__dict__，审批回放要
+    # Snapshot(**snap) 还原；偷偷挂动态属性会让回放直接 TypeError。
+    # 每次 build_model 都会重算，旧快照里带的值只作审计，不参与下一轮决策。
+    pricing_window: tuple | None = None
+    penalty_records: list = field(default_factory=list)
+    penalty_total: float = 0.0
+    effective_weights: dict = field(default_factory=dict)
 
     def minute(self, value):
         dt = datetime.fromisoformat(value)
@@ -381,8 +389,33 @@ def load_project(project, base_id='基座01', as_of=None, overrides=None, input_
                     raise ValueError('维修时长必须为正')
         finite(p['维修包成本（元每套）'], '材料价格', 0)
         finite(p.get('其他费用（元每任务）', 0), '其他费用', 0)
+    # 故障未修期间的剩余出力系数 α（决定不修惩罚 P 的大小）。
+    # 业务表是唯一权威：部件库里带「X严重度剩余出力系数」三列时按部件逐项读；
+    # 旧数据包/外部输入没有这三列时回退到场景配置快照，行为与改造前一致，
+    # 但来源会标成「配置回退」，免得把「需现场校准的假设」当成已确认数据。
+    alpha = {}
+    alpha_source = '部件库业务表'
+    for p in parts.values():
+        name = p['部件名称']
+        record = {}
+        for level in ('高','中','低'):
+            key = f'{level}严重度剩余出力系数'
+            if key in p:
+                record[level] = finite(p[key], f'{name}{key}', 0)
+        if len(record) == 3:
+            alpha[name] = record
+    if len(alpha) != len({p['部件名称'] for p in parts.values()}):
+        alpha = {k: dict(v) for k, v in cfg['部件故障剩余出力系数'].items()
+                 if k != '数值性质' and isinstance(v, dict)}
+        alpha_source = '场景配置快照（回退，业务表缺 α 列）'
+    horizon = finite(params.get('未修惩罚展望期（天）', 14), '未修惩罚展望期（天）', 0)
+    if horizon <= 0:
+        raise ValueError('未修惩罚展望期（天）必须为正')
+    params['未修惩罚展望期（天）'] = horizon
+    meta['剩余出力系数来源'] = alpha_source
+    meta['未修惩罚展望期（天）'] = horizon
     run_mode = run_mode or ('PRODUCTION' if meta['数据性质']=='真实' else 'HYPOTHETICAL')
-    data = Snapshot(base, end, 0, params, parts, [], [], [], [], {}, [], cfg['部件故障剩余出力系数'], meta,
+    data = Snapshot(base, end, 0, params, parts, [], [], [], [], {}, [], alpha, meta,
                     run_mode=run_mode)
     data.part_freeze = block_frozen
     data.now = data.minute(as_of)

@@ -222,6 +222,14 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
                 continue
             request.data_patches.append({"kind": "task_deadline", "at": data.stamp(minute)})
             request.echo.append(f"期限提前到 {data.stamp(minute)}，影响 {len(affected)} 个任务")
+            # 「这些活得在某天之前干完」是明确的硬要求：期限被收紧的任务全进
+            # 必修名单。不锁定的话模型直接不修它们，期限补丁白改，对账那句
+            # 「都按时完工」也会变成只对排进去的任务成立——对未排的撒谎。
+            for tid in affected:
+                if tid not in must_do:
+                    must_do.append(tid)
+            request.echo.append(
+                f"期限收紧的 {len(affected)} 个任务按「必须修」处理（{'、'.join(affected)}）")
             continue
 
         # ── J 组数据补丁 ──
@@ -288,6 +296,27 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
             request.timeline_patches.append(entry)
             request.echo.append(f"{wid} 的{which}改到 {data.stamp(minute)}")
             continue
+
+        # ── 点名单个任务的旋钮，隐含「这个任务必须修」──
+        # 有了「本轮不修」分支之后，只写「任务001 不许上别的船」「任务001 不许
+        # 早开工」，求解器可以把 001 整个丢掉（y=1），约束就空转了。点名即锁定，
+        # 和 H 组一样进必修名单，让内核把 y 按死为 0。
+        named: list[str] = []
+        if patch.slot == "line_fixed":
+            value_ = patch.index.get("任务", {}).get("value")
+            if value_:
+                named = [str(value_)]
+        elif patch.slot == "earliest" \
+                and patch.index.get("组", {}).get("kind") == "任务":
+            value_ = patch.index.get("组", {}).get("value")
+            if value_:
+                named = [str(value_)]
+        for tid in named:
+            if tid not in must_do:
+                must_do.append(tid)
+        if named:
+            request.echo.append(
+                f"「{patch.utterance or patch.slot}」点名了 {'、'.join(named)}，按「必须修」处理")
 
         # ── H 组：涉及的任务隐含「都要修」，落进内核的必修名单 ──
         if patch.slot in ("before_seq", "same_bucket", "all_diff"):

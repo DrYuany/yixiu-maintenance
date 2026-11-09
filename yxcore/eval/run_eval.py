@@ -14,9 +14,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
+
+# 评测金标准写在一张固定快照上（13 个任务、窗口03 在规划范围内）。
+# 不钉死时点的话，告警台账按天累计、目标窗口滚动，同一条用例今天过明天挂，
+# 判出来的全是日期漂移，不是模型好坏。允许 YX_EVAL_AS_OF 显式改时点做对照实验，
+# 但默认必须可复现；pipeline.run 内部也会自己 load_project，所以同时钉环境变量。
+EVAL_AS_OF = os.environ.get("YX_EVAL_AS_OF") or "2026-11-03T00:00:00+08:00"
+os.environ["PLANNING_AS_OF"] = EVAL_AS_OF
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -41,7 +49,7 @@ def snapshot():
     global _snapshot_cache
     if _snapshot_cache is None:
         modules = solver_modules()
-        data = modules["load_project"](PROJECT_ROOT, base_id="基座01")
+        data = modules["load_project"](PROJECT_ROOT, base_id="基座01", as_of=EVAL_AS_OF)
         options = {t["任务编号"]: modules["candidates"](data, t) for t in data.tasks}
         _snapshot_cache = (data, options)
     return _snapshot_cache
@@ -224,6 +232,91 @@ def run_e2_online(*, seconds: float = 90.0) -> tuple[list[str], list[str]]:
     return failures, cautions
 
 
+# ── 新模型语义的公共判分（E3 / E5 / E6 共用）────────────────────────────
+#
+# 旧评测默认「全部都得修」，只判排程数和有没有报不可行。现在「本轮不修」是
+# 合法分支，必须能判：到底少修了几个、是哪几个、有没有如实告诉用户、
+# 以及那一版模型产物里 14 天展望期和 P 的取值是不是真的按参数算出来的。
+
+def _artifact_value(artifact: dict, dotted: str) -> tuple[object, bool]:
+    node: object = artifact
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None, False
+        node = node[part]
+    return node, True
+
+
+def _solve_extras(result: dict, spec: dict, tag: str) -> list[str]:
+    failures: list[str] = []
+    recommended = result.get("推荐") or {}
+    selected = result["排程"] or []
+    done = len(selected)
+    total = recommended.get("待修总数")
+    missing = [str(m.get("任务编号")) for m in recommended.get("未安排") or []]
+    if "排程数至少" in spec and done < spec["排程数至少"]:
+        failures.append(f"{tag}：排程数 {done}，应至少 {spec['排程数至少']}")
+    if "排程数最多" in spec and done > spec["排程数最多"]:
+        failures.append(f"{tag}：排程数 {done}，最多 {spec['排程数最多']}")
+    if "未排数" in spec:
+        if total is None:
+            failures.append(f"{tag}：产物里没有待修总数，判不了未排数")
+        elif total - done != spec["未排数"]:
+            failures.append(f"{tag}：未排 {total - done} 个，应为 {spec['未排数']}")
+    for tid in spec.get("未排含") or []:
+        if tid not in missing:
+            failures.append(f"{tag}：未排清单里没有「{tid}」；实际 {missing}")
+    for tid in spec.get("已排含") or []:
+        if tid not in {s.get("任务编号") for s in selected}:
+            failures.append(f"{tag}：排程里没有「{tid}」")
+    said = "\n".join(result.get("警告") or [])
+    for frag in spec.get("警告含") or []:
+        if frag not in said:
+            failures.append(f"{tag}：告警里找不到「{frag}」；告警全文：{said}")
+    for frag in spec.get("警告不含") or []:
+        if frag in said:
+            failures.append(f"{tag}：告警里出现了不该有的「{frag}」；告警全文：{said}")
+    artifact = result.get("模型产物") or {}
+    for path, want in (spec.get("模型产物含") or {}).items():
+        got, ok = _artifact_value(artifact, path)
+        if not ok or got != want:
+            failures.append(f"{tag}：模型产物 {path} = {got!r}，应为 {want!r}")
+    penalty = spec.get("不修惩罚")
+    if penalty:
+        p = artifact.get("unrepairedPenalty")
+        if not isinstance(p, dict) or not p:
+            failures.append(f"{tag}：模型产物缺 unrepairedPenalty，判不了计价口径")
+        else:
+            scalar = {
+                "展望期天数": "horizonDays",
+                "α来源": "alphaSource",
+                "记录数": None,
+            }
+            for key, field in scalar.items():
+                if key not in penalty:
+                    continue
+                got = len(p.get("records") or []) if field is None else p.get(field)
+                if got != penalty[key]:
+                    failures.append(f"{tag}：不修惩罚 {key} = {got!r}，应为 {penalty[key]!r}")
+            window = p.get("pricingWindow") or {}
+            for key, field in (("实际计价天数", "pricedDays"), ("因覆盖期截断", "truncatedByForecastCoverage")):
+                if key in penalty and window.get(field) != penalty[key]:
+                    failures.append(f"{tag}：计价窗 {key} = {window.get(field)!r}，应为 {penalty[key]!r}")
+            records = p.get("records") or []
+            if "P合计至少" in penalty and float(p.get("penaltyTotal") or 0) < penalty["P合计至少"]:
+                failures.append(f"{tag}：P 合计 {p.get('penaltyTotal')}，应至少 {penalty['P合计至少']}")
+            if penalty.get("逐任务P均为正") and (
+                not records or any(float(r.get("不修惩罚P（元）") or 0) <= 0 for r in records)
+            ):
+                failures.append(f"{tag}：逐任务 P 有非正值或记录为空")
+            if penalty.get("未排任务都有P记录"):
+                ids = {r.get("任务编号") for r in records}
+                for tid in missing:
+                    if tid not in ids:
+                        failures.append(f"{tag}：未排任务 {tid} 没有对应的 P 记录")
+    return failures
+
+
 # ── E3 端到端 ───────────────────────────────────────────────────────────
 
 CAUTIONS: list[str] = []  # 如实标注但不判失败的情形（如未证最优时的方案波动）
@@ -284,6 +377,9 @@ def run_e3(*, seconds: float = 20.0) -> list[str]:
                 for frag in case.get("拦截含", []):
                     if not any(frag in e for e in reasons):
                         failures.append(f"E3[{name}]：拦了但理由要含「{frag}」，实际 {exc.errors}")
+                any_of = case.get("拦截含任一") or []
+                if any_of and not any(frag in e for frag in any_of for e in reasons):
+                    failures.append(f"E3[{name}]：拦了但理由不含任一 {any_of}，实际 {exc.errors}")
             continue
         if expect == "拦截":
             failures.append(f"E3[{name}]：期望拦截却出解了")
@@ -302,6 +398,7 @@ def run_e3(*, seconds: float = 20.0) -> list[str]:
         for frag in case.get("对账不含", []):
             if frag in audit:
                 failures.append(f"E3[{name}]：对账里出现了不该有的「{frag}」；对账全文：{audit}")
+        failures += _solve_extras(r, case, f"E3[{name}]")
     return failures
 
 
@@ -408,6 +505,7 @@ def run_e5() -> list[str]:
             for frag in run_expect.get("警告含", []):
                 if frag not in said:
                     failures.append(f"E5[{name}]：告警里找不到「{frag}」；告警全文：{said}")
+            failures += _solve_extras(result, run_expect, f"E5[{name}]")
     return failures
 
 
@@ -472,6 +570,7 @@ def run_e6(*, seconds: float = 20.0) -> list[str]:
         for frag in solve.get("警告含", []):
             if frag not in said:
                 failures.append(f"E6[{name}]：告警里找不到「{frag}」；告警全文：{said}")
+        failures += _solve_extras(result, solve, f"E6[{name}]")
     return failures
 
 

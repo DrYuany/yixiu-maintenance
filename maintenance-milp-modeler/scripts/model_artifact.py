@@ -19,22 +19,37 @@ PARAMETER_META = {
     "风机间转移小时数": {"label": "风机间转移时间", "unit": "小时"},
     "每天维修开始时间": {"label": "每日维修开始时间", "unit": "时刻"},
     "每天维修结束时间": {"label": "每日维修结束时间", "unit": "时刻"},
+    "未修惩罚展望期（天）": {"label": "未修惩罚展望期", "unit": "天"},
+    "剩余出力系数来源": {"label": "剩余出力系数来源", "unit": "数据出处"},
 }
 
 
+COST_TERMS = (
+    "固定停机损失常数 "
+    "+ Σ(任务直接成本 + 展望窗内停机损失变化) × x(i,k,l) "
+    "+ Σ 船租 × 租船日变量 rent(line,day) "
+    "+ Σ 不修惩罚 P_i × y_i"
+)
+PENALTY_FORMULA = (
+    "P_i = revenue(anchor, min(anchor + 展望期, 预测覆盖期末)) × (1 − α_i)，"
+    "α_i 为部件×严重度剩余出力系数（业务表：部件库；初版模拟假设，需现场校准）"
+)
+
 METRIC_FORMULAS = {
-    "总经济成本": (
-        "总经济成本 = 固定停机损失常数 "
-        "+ Σ(任务直接成本 + 停机损失变化) × x(i,k,l) "
-        "+ Σ 船租 × 租船日变量 y(line,day)"
-    ),
+    "总经济成本": f"总经济成本 = {COST_TERMS}；{PENALTY_FORMULA}",
     "现金支出": (
         "现金支出 = Σ 任务直接成本 × x(i,k,l) "
-        "+ Σ 船租 × y(line,day)"
+        "+ Σ 船租 × rent(line,day)；"
+        "发电损失与不修惩罚都是机会成本，不计入当期现金支出"
     ),
-    "完成任务数": "完成任务数 = Σ x(i,k,l)",
-    "最后完工时间": "最后完工时间 = max(完工分钟(i,k) × x(i,k,l))",
-    "完工时间和": "完工时间和 = Σ 完工分钟(i,k) × x(i,k,l)",
+    "完成任务数": "完成任务数 = Σ x(i,k,l) = 任务总数 − Σ y_i",
+    # 未修任务不能白送 0，否则「一个都不修」在完工时间类指标上会变成虚假最优。
+    "最后完工时间": (
+        "最后完工时间 = max( 完工分钟(i,k) × x(i,k,l), 展望窗终点 × y_i )"
+    ),
+    "完工时间和": (
+        "完工时间和 = Σ 完工分钟(i,k) × x(i,k,l) + 展望窗终点 × Σ y_i"
+    ),
     "高严重完成数": "高严重完成数 = Σ_{任务严重等级=高} x(i,k,l)",
     "中严重完成数": "中严重完成数 = Σ_{任务严重等级=中} x(i,k,l)",
     "低严重完成数": "低严重完成数 = Σ_{任务严重等级=低} x(i,k,l)",
@@ -50,7 +65,7 @@ CONSTRAINT_MEANINGS = {
     "no_overlap": "同一作业线或同一风机上的作业时间不得重叠",
     "lin_max": "最大完工、租船日启用和停机损失线性化辅助约束",
     "at_most_one": "互斥候选最多选择一个",
-    "exactly_one": "候选集合恰好选择一个",
+    "exactly_one": "每个任务恰好落入一个分支：执行某个候选，或本轮不修（Σx + y = 1）",
     "bool_or": "布尔或逻辑约束",
     "bool_and": "布尔与逻辑约束",
 }
@@ -80,6 +95,8 @@ def _constraint_kind(constraint: Any) -> str:
 def _variable_group(name: str) -> str:
     if name.startswith("x_"):
         return "task_choice"
+    if name.startswith("y_"):
+        return "unrepaired"
     if name.startswith("prefix_"):
         return "rental_prefix"
     if name.startswith("suffix_"):
@@ -105,6 +122,7 @@ def _domain(variable: Any) -> list[int]:
 def _variable_meaning(group: str) -> str:
     return {
         "task_choice": "任务 i 在候选 k、作业线 l 上执行时为 1，否则为 0",
+        "unrepaired": "任务 i 本轮不修时为 1；与 x 构成 Σx + y = 1，目标上按 P_i 计价",
         "rental_prefix": "某作业线在某日已有作业开始时为 1",
         "rental_suffix": "某作业线在某日仍有作业未结束时为 1",
         "rental_day": "某作业线在某日需要租船时为 1",
@@ -241,14 +259,23 @@ def build_model_artifact(
     ]
     constraints.sort(key=lambda item: item["count"], reverse=True)
     objective_stages = []
+    effective_weights = getattr(data, "effective_weights", None) or weights or {}
     for index, (name, sense, expression) in enumerate(stages, start=1):
         expression_preview = _expression_preview(expression)
+        if name == "标准化加权目标":
+            detail = "、".join(f"{key}={value}" for key, value in effective_weights.items()) or "模板默认"
+            formula = (
+                "标准化加权目标 = Σ_j (w_j ÷ 归一化分母_j) × 指标_j"
+                f"（本次权重：{detail}）；其中 总经济成本 = {COST_TERMS}；{PENALTY_FORMULA}"
+            )
+        else:
+            formula = METRIC_FORMULAS.get(name, f"目标表达式：{name}")
         objective_stages.append(
             {
                 "priority": index,
                 "name": name,
                 "sense": "maximize" if sense == "maximize" else "minimize",
-                "formula": METRIC_FORMULAS.get(name, f"目标表达式：{name}"),
+                "formula": formula,
                 "expressionCharacters": expression_preview["expressionCharacters"],
                 "expressionTermCount": expression_preview["termCount"],
                 "expressionPreview": expression_preview["preview"],
@@ -265,13 +292,60 @@ def build_model_artifact(
     choice_count = len(choices)
     line_count = min(int(data.params["最多作业线数"]), int(data.params["人员总上限"]))
     window_count = len(data.windows)
+    horizon_days = data.params.get("未修惩罚展望期（天）", 14)
+    alpha_source = data.meta.get("剩余出力系数来源", "未标注")
+    pricing_window = getattr(data, "pricing_window", None)
+    penalty_records = list(getattr(data, "penalty_records", None) or [])
+    if pricing_window:
+        anchor, window_end, truncated = pricing_window
+        pricing = {
+            "anchorMinute": anchor,
+            "endMinute": window_end,
+            "anchorStamp": data.stamp(anchor),
+            "endStamp": data.stamp(window_end),
+            "pricedDays": round((window_end - anchor) / 1440, 2),
+            "requestedDays": horizon_days,
+            "truncatedByForecastCoverage": bool(truncated),
+            "anchorRule": (
+                "本轮全部候选开工时刻、规划时点、告警发生时刻三者取最晚；"
+                "不取日历今天，避免晚窗口被判成「修不修都在窗外」"
+            ),
+        }
+    else:
+        pricing = None
+    unrepaired_penalty = {
+        "variable": "y_i ∈ {0,1}：任务 i 本轮不修为 1，修为 0",
+        "constraint": (
+            "每个任务 Σ_{k,l} x(i,k,l) + y_i = 1；"
+            "已批准检修单锁定的任务强制 y_i = 0（不许静默丢单）"
+        ),
+        "formula": "P_i = revenue(anchor, min(anchor + 展望期, 预测覆盖期末)) × (1 − α_i)",
+        "meaning": (
+            "本轮不修、带病发到展望窗末的发电机会损失。不是另设的罚金单价，"
+            "与发电降额损失同源、不重复计价；资源不够时由 P 与维修成本自然权衡少修哪些。"
+        ),
+        "horizonDays": horizon_days,
+        "alphaSource": alpha_source,
+        "alphaNature": "部件×严重度剩余出力系数；初版模拟假设，需现场数据校准",
+        "pricingWindow": pricing,
+        "penaltyTotal": round(float(getattr(data, "penalty_total", 0.0) or 0.0), 2),
+        "records": penalty_records,
+        "note": (
+            "全模型共用一个计价窗（独立复核按同一条时间轴积分）；"
+            "末端超出逐时电价与发电预测覆盖期时诚实截断，"
+            "实际计价天数见 pricingWindow.pricedDays 与截断标记。"
+        ),
+    }
     return {
-        "schemaVersion": "maintenance-model-artifact-v1",
-        "modelType": "CP-SAT bounded integer scheduling with linear cost",
+        "schemaVersion": "maintenance-model-artifact-v2",
+        "modelType": "CP-SAT bounded integer scheduling with linear cost and optional non-repair",
         "problemStatement": (
             "在已批准海事窗口、安全海况、库存、船线、人员、每日工时和任务期限内，"
-            "选择可执行维修任务及其开工时间，并按声明的分层或加权目标优化。"
+            "选择可执行维修任务及其开工时间；每项任务允许本轮不修，但需按固定展望期"
+            "承担不修惩罚 P_i，由目标函数自然权衡，不再把「全部必须修」写成硬约束。"
         ),
+        "costFormula": f"总经济成本 = {COST_TERMS}；{PENALTY_FORMULA}",
+        "unrepairedPenalty": unrepaired_penalty,
         "strategy": strategy,
         "mode": mode,
         "weights": weights,
@@ -287,6 +361,8 @@ def build_model_artifact(
             "planningBoundary": data.meta.get("规划边界"),
             "targetWindow": data.meta.get("目标窗口编号"),
             "businessVersion": data.meta.get("业务版本"),
+            "alphaSource": alpha_source,
+            "penaltyHorizonDays": horizon_days,
         },
         "dimensions": {
             "tasks": task_count,
@@ -318,7 +394,10 @@ def build_model_artifact(
             "artifactGenerator": "product_planner.build_model_artifact/v1",
             "sourceFile": data.meta.get("来源"),
             "generatedFrom": "actual CP-SAT model built for this solve",
-            "note": "变量和约束数量来自本次 CP-SAT Proto；目标公式为生成模型时的实际结构摘要。",
+            "note": (
+                "变量和约束数量来自本次 CP-SAT Proto；目标公式为生成模型时的实际结构摘要；"
+                "不修惩罚的逐任务取值、α 出处与计价窗见 unrepairedPenalty。"
+            ),
         },
     }
 

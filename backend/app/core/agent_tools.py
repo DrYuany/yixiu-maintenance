@@ -2207,14 +2207,44 @@ class AgentToolbox:
         terms = {
             "F_1": (
                 r"\sum_{i\in I}\sum_{k\in K_i}\sum_{l\in L} c_{i,k,l}\,x_{i,k,l}"
-                r"+\sum_{l\in L}\sum_{d\in D} r_l\,y_{l,d}+C_0"
+                r"+\sum_{l\in L}\sum_{d\in D} r_l\,y_{l,d}"
+                r"+\sum_{i\in I} P_i\,z_i+C_0"
             ),
             "F_2": r"\sum_{i\in I}\sum_{k\in K_i}\sum_{l\in L} x_{i,k,l}",
             "F_3": r"T",
-            "F_4": r"\sum_{i\in I}\sum_{k\in K_i}\sum_{l\in L} t_{i,k}\,x_{i,k,l}",
+            "F_4": (
+                r"\sum_{i\in I}\sum_{k\in K_i}\sum_{l\in L} t_{i,k}\,x_{i,k,l}"
+                r"+T_{\mathrm{end}}\sum_{i\in I} z_i"
+            ),
         }
         objective_lines: list[str] = []
-        if mode == "加权":
+        weights = _dict(artifact.get("weights")) or _dict(
+            _dict(artifact.get("objectives")).get("weights")
+        )
+        if mode == "加权" and weights and len(symbols) == 1:
+            # 加权模式只有一个合成阶段。旧渲染给它分到查不到表达式的 F_5，
+            # 用户问「模型公式」拿到的是 \text{标准化加权目标} 几个字，成本项
+            # 里的 P 和 z 全都看不见。按产物登记的权重逐项展开，系数才核对得了。
+            lookup = {
+                "总经济成本": terms["F_1"],
+                "完成任务数": terms["F_2"],
+                "最后完工时间": terms["F_3"],
+                "完工时间和": terms["F_4"],
+            }
+            pieces: list[str] = []
+            for name in weights:
+                index = len(pieces) + 1
+                expression = lookup.get(name, rf"\text{{{name}}}")
+                pieces.append(
+                    rf"\frac{{w_{{{index}}}}}{{\mathrm{{range}}_{{{index}}}}}"
+                    rf"\,\left({expression}\right)"
+                )
+            objective_lines.append(r"\min\;&" + " + ".join(pieces))
+            objective_lines.append(
+                r"w_j&\text{产物里的权重；range}_j\text{ 为该指标的上界}"
+            )
+            symbols = []
+        elif mode == "加权":
             weighted = " + ".join(
                 rf"w_{{{index+1}}}\,{symbol}"
                 for index, (_name, symbol) in enumerate(symbols)
@@ -2243,12 +2273,14 @@ class AgentToolbox:
 
         variables = r"""\begin{aligned}
 &x_{i,k,l}\in\{0,1\} && \text{任务 }i\text{ 在候选 }k\text{、作业线 }l\text{ 上执行}\\
+&z_i\in\{0,1\} && \text{任务 }i\text{ 本轮不修（不修惩罚 }P_i\text{ 挂在它上面）}\\
 &s_{l,d},\,e_{l,d},\,y_{l,d}\in\{0,1\} && \text{开工、未完工与租船日}\\
 &T\ge 0 && \text{最后完工时间}
 \end{aligned}"""
         constraints = r"""\begin{aligned}
-&\sum_{k\in K_i}\sum_{l\in L}x_{i,k,l}=1, && \forall i\\
-&T\ge t_{i,k}\,x_{i,k,l}, && \forall i,k,l\\
+&\sum_{k\in K_i}\sum_{l\in L}x_{i,k,l}+z_i=1, && \forall i\\
+&z_i=0, && \text{已批准检修单锁定的任务}\\
+&T\ge t_{i,k}\,x_{i,k,l},\quad T\ge T_{\mathrm{end}}\,z_i, && \forall i,k,l\\
 &y_{l,d}\ge s_{l,d},\quad y_{l,d}\ge e_{l,d}, && \forall l,d\\
 &s_{l,d}\ge x_{i,k,l}, && \text{作业在 }d\text{ 开工}\\
 &\sum_{(i,k)\text{ 已执行}}q_{i,k}\le Q_d, && \forall d\\
@@ -2268,6 +2300,7 @@ class AgentToolbox:
     ) -> str:
         summary = version.resultSummary or {}
         dimensions = _dict(artifact.get("dimensions"))
+        mode = str(artifact.get("mode") or "分层")
         latex = self._render_math_latex(version, artifact)
         status = _status(version)
         proof = "已证明最优" if status == "OPTIMAL" else "尚未证明最优"
@@ -2309,13 +2342,22 @@ class AgentToolbox:
             ])
         if show_objective:
             lines.extend([
-                "**目标函数（分层字典序）**",
+                f"**目标函数（{mode}）**",
                 "",
                 "$$",
                 latex["objective"],
                 "$$",
                 "",
             ])
+            weights = _dict(artifact.get("weights")) or _dict(
+                _dict(artifact.get("objectives")).get("weights")
+            )
+            if mode == "加权" and weights:
+                lines.extend([
+                    "权重（本次产物登记的归一化前取值）："
+                    + "、".join(f"{key} = {value}" for key, value in weights.items()) + "。",
+                    "",
+                ])
         if show_constraints:
             lines.extend([
                 "**主要约束**",
@@ -2325,6 +2367,49 @@ class AgentToolbox:
                 "$$",
                 "",
             ])
+        if show_objective:
+            penalty = _dict(artifact.get("unrepairedPenalty"))
+            if not penalty:
+                lines.extend([
+                    "**不修惩罚**",
+                    "",
+                    "这一版方案产自旧模型，产物里没有不修惩罚的取值记录；不能事后推算冒充原模型。",
+                    "",
+                ])
+            else:
+                window = _dict(penalty.get("pricingWindow"))
+                truncated = bool(window.get("truncatedByForecastCoverage"))
+                lines.extend([
+                    "**不修惩罚（本轮计价口径）**",
+                    "",
+                    (
+                        f"$P_i = R(\\mathrm{{anchor}},\\mathrm{{end}})\\times(1-\\alpha_i)$；"
+                        f"固定展望期 {penalty.get('horizonDays')} 天，"
+                        f"α 来源：{penalty.get('alphaSource')}（{penalty.get('alphaNature')}）。"
+                    ),
+                    "",
+                    (
+                        f"计价窗 {window.get('anchorStamp')} → {window.get('endStamp')}，"
+                        f"实际 {window.get('pricedDays')} 天"
+                        + ("（末端超出逐时预测覆盖期，已截断）" if truncated else "")
+                        + f"；本轮不修惩罚合计 ¥{float(penalty.get('penaltyTotal') or 0):,.2f}。"
+                    ),
+                    "",
+                    str(penalty.get("note") or ""),
+                    "",
+                ])
+                records = _list(penalty.get("records"))
+                if records:
+                    lines.extend(["逐任务取值（节选）：", ""])
+                    for item in records[:8]:
+                        lines.append(
+                            f"- {item.get('任务编号')} · {item.get('部件名称')} · "
+                            f"{item.get('严重等级')}：α={item.get('剩余出力系数')}，"
+                            f"P=¥{float(item.get('不修惩罚P（元）') or 0):,.2f}"
+                        )
+                    if len(records) > 8:
+                        lines.append(f"- …（共 {len(records)} 条，完整清单见模型产物文件）")
+                    lines.append("")
         lines.extend([
             "**本次规模**",
             "",
@@ -2338,7 +2423,9 @@ class AgentToolbox:
             "**符号含义**",
             "",
             (
-                r"$c_{i,k,l}$：直接成本与停机损失变化；$r_l$：船租；"
+                r"$c_{i,k,l}$：直接成本与展望窗内停机损失变化；$r_l$：船租；"
+                r"$P_i$：任务不修的展望期发电机会损失；$\alpha_i$：部件×严重度剩余出力系数；"
+                r"$z_i$：不修指示变量；$T_{\mathrm{end}}$：展望窗终点；"
                 r"$t_{i,k}$：完工分钟；$q_{i,k}$：备件消耗；$Q_d$：第 $d$ 天库存上限。"
             ),
             "",

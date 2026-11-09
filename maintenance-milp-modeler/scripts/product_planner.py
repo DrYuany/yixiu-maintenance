@@ -224,14 +224,17 @@ def account(data, schedule):
     groups=defaultdict(list)
     for t in data.tasks: groups[t['风机编号']].append(t)
     loss=0.0
-    begin=max(0,data.now)
+    # 与模型同一条计价时间轴：模型的不修惩罚 P 按固定展望期计，复核若仍按
+    # 整个规划期积分，「模型成本」与「独立复算」就永远差一大截，硬校验会误报。
+    window=getattr(data,'pricing_window',None)
+    begin,finish=(window[0],window[1]) if window else (max(0,data.now),data.end)
     for tasks in groups.values():
-        points={begin,data.end} | set(range((begin//60+1)*60,data.end,60))
+        points={begin,finish} | set(range((begin//60+1)*60,finish,60))
         for t in tasks:
             points.add(max(begin,t['发生分钟']))
             if t['任务编号'] in by_id:
-                points.update(max(begin,by_id[t['任务编号']][k]) for k in ('开始','完成'))
-        pts=sorted(p for p in points if begin<=p<=data.end)
+                points.update(max(begin,min(by_id[t['任务编号']][k],finish)) for k in ('开始','完成'))
+        pts=sorted(p for p in points if begin<=p<=finish)
         for a,b in zip(pts,pts[1:]):
             reductions=[]
             for t in tasks:
@@ -257,23 +260,67 @@ def account(data, schedule):
             '现金支出':round(rent+labor+material+other,2),'复核通过':True,'排程':sorted(schedule,key=lambda s:(s['开始'],s['作业线']))}
 
 
+def _penalty_window(data, options, horizon_minutes):
+    """本轮统一的计价窗口：固定展望期，锚在本轮最早能开工的时刻。
+
+    锚点不取「今天」是有原因的：滚动到规划期末时，剩下的窗口可能全在两周之后，
+    若从今天起算 14 天，窗口会在所有候选开工之前就结束，模型会算出「修与不修
+    都在窗外、那就不修吧」——晚窗口被误判成不划算。锚在最早候选上，语义是
+    「本来最早这天能修却没修，从这天起再拖一个展望期的损失」。
+
+    全局只用一个窗口（不是每任务一个），因为独立复核 account() 是按风机分组
+    对同一条时间轴积分的；窗口不统一，模型成本与复核成本就对不上。
+    末端只能被「逐时电价与发电预测覆盖期」截断。**不能用 data.end**：那是目标
+    窗口的结束日（规划边界），比预测覆盖期短得多；拿它截断会把 14 天展望期砍成
+    四五天，维修完之后的零降额收益全被切掉，模型会算出「修还不如不修」。
+    """
+    starts=[c['开始'] for pool in options.values() for c in pool]
+    anchor=max([0,data.now]+[t['发生分钟'] for t in data.tasks]+([min(starts)] if starts else []))
+    requested_end=anchor+horizon_minutes
+    forecast_end=len(data.hourly)*60
+    window_end=min(requested_end,forecast_end)
+    window_end=max(window_end,anchor)
+    return anchor,window_end,requested_end>forecast_end
+
+
 def build_model(data, options, partial=False, strategy='成本最低优先', mode='加权', weights=None, limits=None, extra_constraints=None, custom_stages=None):
     m=cp_model.CpModel();choices=[];task_vars={};cost_terms=[];cash_terms=[];constant=0
     # 小一修（小一修/）要按「人工费 / 备件费 / 船舶艘天」三个口径设上限和权重，
     # 这三个量不进目标函数，只是登记进 metrics 供注入口闭包和目标加权取用。
     # 纯增量：不加任何约束，不改已有任何一项成本的算法。
     labor_terms=[];spare_terms=[];rent_days=[]
+    y_vars={};penalty_records=[];penalty_total=0.0;task_cost_bound={}
+    horizon_minutes=int(float(data.params.get('未修惩罚展望期（天）',14))*1440)
     line_count=min(data.params['最多作业线数'],data.params['人员总上限'])
     line_intervals=defaultdict(list); turbine_intervals=defaultdict(list)
     tasks={t['任务编号']:t for t in data.tasks}
     multi={k for k in {t['风机编号'] for t in data.tasks} if sum(t['风机编号']==k for t in data.tasks)>1}
     fixed_by_id={s['任务编号']:s for s in data.fixed}
+    anchor,window_end,truncated=_penalty_window(data,options,horizon_minutes)
+    # 计价窗口是输入口径，不是求解结果：独立复核 account() 读同一条时间轴，
+    # 才不会拿「全周期实际成本」去对「14 天展望期模型成本」。产物层也读它。
+    data.pricing_window=(anchor,window_end,truncated)
+    data.penalty_records=[];data.penalty_total=0.0
+    # 加权模式的「实际生效权重」：调用方没传时 build_model 会取模板默认，
+    # 产物层要写进公式栏，不能只写「标准化加权目标」六个字。
+    data.effective_weights={}
     for task in data.tasks:
         tid=task['任务编号'];task_vars[tid]=[]
-        baseline=data.revenue(max(0,data.now,task['发生分钟']),data.end)*(1-task['剩余出力'])
-        if task['风机编号'] not in multi: constant+=round(baseline*MONEY)
         part=data.parts[task['部件编号']]
         pool=[fixed_by_id[tid]] if tid in fixed_by_id else options[tid]
+        alpha=task['剩余出力']
+        # P = 这轮不修、展望期内带病发电的机会损失。它是显式挂在 y 上的惩罚，
+        # 不再是「常数 + 负 change」那种看不出来的一对暗账。
+        penalty=data.revenue(anchor,window_end)*(1-alpha)
+        data.penalty_total+=penalty
+        y=m.NewBoolVar(f'y_{tid}')
+        y_vars[tid]=y
+        data.penalty_records.append({'任务编号':tid,'风机编号':task['风机编号'],
+            '部件名称':part['部件名称'],'严重等级':task['严重等级'],'剩余出力系数':alpha,
+            '展望窗起点':data.stamp(anchor),'展望窗终点':data.stamp(window_end),
+            '计价天数':round((window_end-anchor)/1440,2),'因数据覆盖期截断':truncated,
+            '不修惩罚P（元）':round(penalty,2)})
+        task_cost_bound[tid]=0
         for ci,c in enumerate(pool):
             for line in ([fixed_by_id[tid]['作业线']] if tid in fixed_by_id else range(1,line_count+1)):
                 x=m.NewBoolVar(f'x_{tid}_{ci}_{line}')
@@ -288,10 +335,21 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
                 labor_terms.append(round(labor*MONEY)*x);spare_terms.append(round(spare*MONEY)*x)
                 change=0
                 if task['风机编号'] not in multi:
-                    change=(data.revenue(max(data.now,0,task['发生分钟']),max(data.now,c['开始']))*(1-task['剩余出力'])
-                            +data.revenue(max(data.now,c['开始']),c['完成'])-baseline)
+                    # 与 P 同一把尺子、同一个展望窗：开工前仍降额 + 维修期间整机停机。
+                    # 修好之后到窗口末不再降额，那份收益体现在「不修要付 P」上。
+                    s=max(anchor,min(c['开始'],window_end))
+                    f=min(c['完成'],window_end)
+                    change=(data.revenue(anchor,s)*(1-alpha)
+                            +(data.revenue(s,f) if f>s else 0))
                 cost_terms.append(round((direct+change)*MONEY)*x)
-        m.Add(sum(x for c,x in task_vars[tid]) == 1 if not partial or tid in fixed_by_id else sum(x for c,x in task_vars[tid]) <= 1)
+                task_cost_bound[tid]=max(task_cost_bound[tid],abs(round((direct+change)*MONEY)))
+        # 不修是一个合法分支：Σx + y = 1。以前写死 Σx = 1，任务一旦塞不下
+        # 就整模型 INFEASIBLE；现在求解器会挑「P 大、修起来便宜」的先修，
+        # 资源不够时优雅少修。已批准检修单锁定的任务不许被丢，强制 y=0。
+        m.Add(sum(x for c,x in task_vars[tid])+y==1)
+        if tid in fixed_by_id: m.Add(y==0)
+        if task['风机编号'] not in multi:
+            cost_terms.append(round(penalty*MONEY)*y)
     for ints in line_intervals.values(): m.AddNoOverlap(ints)
     for ints in turbine_intervals.values(): m.AddNoOverlap(ints)
     moments=sorted({mvt['时间'] for mvt in data.movements}|{c['开始'] for c,x in choices})
@@ -319,31 +377,48 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
     for turbine in multi:
         ts=[t for t in data.tasks if t['风机编号']==turbine]
         group=[(c,x) for c,x in choices if c['风机编号']==turbine]
-        points=sorted({data.now,data.end}|set(range((data.now//60+1)*60,data.end,60))|
-                      {max(data.now,c[k]) for c,x in group for k in ('开始','完成')})
+        # 同一风机多个故障只按最严重的那份降额计一次（不重复计价）。
+        # 不修时 done 恒为 0，降额会一直计到窗口末 —— 这就是这一组的 P，
+        # 因此这些任务不再单独挂 y 惩罚，免得双算。窗口口径与单任务一致。
+        points=sorted({anchor,window_end}|set(range((anchor//60+1)*60,window_end,60))|
+                      {max(anchor,min(c[k],window_end)) for c,x in group for k in ('开始','完成')})
         for a,b in zip(points,points[1:]):
             reductions=[0]
             for t in ts:
-                if t['发生分钟']>a: continue
+                # 未修（y=1）与「还没修完」一样，降额一直计到窗口末；
+                # 这一项就是该组的 P，所以这些任务不再单独挂 y 惩罚。
                 done=sum(x for c,x in task_vars[t['任务编号']] if c['完成']<=a)
                 reductions.append(round((1-t['剩余出力'])*10000)*(1-done))
             active=sum(x for c,x in group if c['开始']<=a<c['完成'])
             reductions.append(10000*active)
             z=m.NewIntVar(0,10000,f'loss_{turbine}_{a}');m.AddMaxEquality(z,reductions)
             cost_terms.append(round(data.revenue(a,b)*100)*z)
+    # 旧写法把每个任务的 P 加进 constant、又在 change 里减掉一次， algebraically
+    # 等价于 Σy·P，但模型产物里只看到「固定停机损失常数」，谁也核对不了。
+    # 现在 constant 恒为 0，P 全部挂在显式 y 变量上。
     cost=constant+sum(cost_terms);cash=sum(cash_terms)
     count=sum(x for c,x in choices)
-    finish=m.NewIntVar(0,data.end,'最后完工时间')
-    m.AddMaxEquality(finish,[c['完成']*x for c,x in choices] or [0])
+    # 完工时间类指标必须给「未修」一个代价，否则「一个都不修」会让
+    # 最后完工时间=0、完工时间和=0，加权目标里这两项反而把不修捧成最优解
+    # （旧模型强制全修，这个退化解永远进不来，所以一直没暴露）。
+    # 语义：没修的任务视为拖到本轮计价窗末仍未完成，不白送 0。
+    y_sum=sum(y_vars.values())
+    # 计价窗可能越过目标窗口结束日（按真实预测覆盖期计），完工时间变量的上界
+    # 必须跟着抬，否则 window_end*y 会落到变量定义域之外，模型直接无解。
+    time_ceiling=max(data.end,window_end)
+    finish=m.NewIntVar(0,time_ceiling,'最后完工时间')
+    m.AddMaxEquality(finish,[c['完成']*x for c,x in choices]+[window_end*y for y in y_vars.values()] or [0])
     metrics={'总经济成本':cost,'现金支出':cash,'完成任务数':count,'最后完工时间':finish,
-             '完工时间和':sum(c['完成']*x for c,x in choices)}
+             '完工时间和':sum(c['完成']*x for c,x in choices)+window_end*y_sum}
     # 小一修登记的三个口径（同上，纯增量）。空列表用常数 0 兜住，避免 CP-SAT 拿到空和式。
     metrics['人工费']=sum(labor_terms) if labor_terms else 0
     metrics['备件费']=sum(spare_terms) if spare_terms else 0
     metrics['船舶艘天']=sum(rent_days) if rent_days else 0
     for level in ('高','中','低'):
         metrics[level+'严重完成数']=sum(x for c,x in choices if c['严重等级']==level)
-        metrics[level+'严重完工时间和']=sum(c['完成']*x for c,x in choices if c['严重等级']==level)
+        level_y=sum(y for tid,y in y_vars.items() if tasks[tid]['严重等级']==level)
+        metrics[level+'严重完工时间和']=(sum(c['完成']*x for c,x in choices if c['严重等级']==level)
+                                          +window_end*level_y)
     limits=limits or {}
     allowed={'现金预算','最低完成数','必修任务','最大总成本'}
     if set(limits)-allowed: raise ValueError('未知业务约束，需扩展编译器')
@@ -366,9 +441,10 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
         registry=json.loads((Path(__file__).resolve().parents[1]/'references/四种目标模板.json').read_text(encoding='utf-8'))
         template=next(t for t in registry['模板'] if t['模板编号']==strategy)
         declared=[]
-        if partial:
-            # 允许少修时，"先多修几个"本身要排在最前面，否则部分排程会挑最便宜的几项。
-            declared.extend([(level+'严重完成数','maximize',metrics[level+'严重完成数']) for level in ('高','中','低')])
+        # 以前「部分排程」会把高/中/低完成数最大化三段硬压在成本前面，
+        # 等于换个方式逼着全修，成本与优先级再也换不掉。现在不修是合法分支、
+        # 惩罚 P 已经进目标，该倾向由 P 的大小自然产生，不再需要这三段前置目标。
+        # partial 参数保留只为兼容调用签名与产物标记，不改变模型结构。
         if mode=='分层':
             # 按模板声明的优先级逐条优化，一条不改、一条不删。
             # 曾经的写法是 `if partial or not 指标.endswith('完成数')`——本意是躲开
@@ -378,16 +454,24 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
             declared.extend((s['指标'],s['方向'],metrics[s['指标']]) for s in template['分层目标'])
         elif mode=='加权':
             weights=weights if weights is not None else template['加权默认值']
+            data.effective_weights=dict(weights)
             if not weights or set(weights)-set(metrics) or any(not isinstance(v,(int,float)) or not math.isfinite(v) or v<0 for v in weights.values()) or not any(weights.values()):
                 raise ValueError('权重需非负有限、至少一项为正，并使用已登记指标')
             terms=[]
             # Bound-based normalization coefficients, rounded with explicitly recorded precision.
-            ranges={'总经济成本':max(1,abs(constant)+sum(abs(round(data.revenue(c['开始'],c['完成'])*MONEY)) for c,x in choices)+data.end//1440*line_count*round(data.params['船租（元每艘每天）']*MONEY)),
+            # 老分母把全部 1800 个候选项的停机损失都加了一遍，可每个任务只会选
+            # 一个候选——重复计数几十倍，把成本项系数压到个位数，P 再大也换不动
+            # 「完成任务数」。改成每个任务取其候选项中的最大单项成本，才是真实上界。
+            cost_bound=(abs(constant)+abs(round(data.penalty_total*MONEY))
+                        +sum(task_cost_bound.values())
+                        +data.end//1440*line_count*round(data.params['船租（元每艘每天）']*MONEY))
+            ranges={'总经济成本':max(1,cost_bound),
                     '现金支出':max(1,data.end//1440*line_count*round(data.params['船租（元每艘每天）']*MONEY)+sum(data.parts[t['部件编号']]['维修包成本（元每套）']*MONEY for t in data.tasks)),
-                    '完成任务数':max(1,len(tasks)),'最后完工时间':data.end,'完工时间和':max(1,len(tasks))*data.end}
+                    '完成任务数':max(1,len(tasks)),'最后完工时间':time_ceiling,
+                    '完工时间和':max(1,len(tasks))*time_ceiling}
             for level in ('高','中','低'):
                 ranges[level+'严重完成数']=max(1,sum(t['严重等级']==level for t in data.tasks))
-                ranges[level+'严重完工时间和']=ranges[level+'严重完成数']*data.end
+                ranges[level+'严重完工时间和']=ranges[level+'严重完成数']*time_ceiling
             # 小一修三个新口径的归一化分母。不补这三个键，加权模式一旦带上
             # 人工/备件/租船天权重就会 KeyError——ranges 必须和 metrics 同keyspace。
             ranges['人工费']=ranges['现金支出']

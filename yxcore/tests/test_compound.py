@@ -127,12 +127,17 @@ def test_run_normalizes_at_entry():
 # ── 部分排程必须说出来 ──────────────────────────────────────────────────
 
 def test_implicit_partial_is_announced():
-    """只修一个任务 → 只排 1 个。不吭声用户会以为 13 个都修了。"""
+    """只修一个任务 → 只排 1 个，且把「其余几个没修」按当轮真实任务数说出来。
+
+    告警里的数字从产物推，别写死 12：告警台账按天累计，10-23 时点是 10 个任务、
+    11-03 时点是 13 个，写死就会变成一条随日期漂移的假失败。
+    """
     patch = P(slot="scope_only", utterance="只修任务001", index={"范围": G("任务", "任务001")})
     result = run([patch], seconds=10)
+    total = result["推荐"]["待修总数"]
     assert len(result["排程"]) == 1
     assert result["部分排程"] is True
-    assert any("其余 12 个这轮不修" in w for w in result["警告"])
+    assert any(f"其余 {total - 1} 个这轮不修" in w for w in result["警告"])
 
 
 def test_scope_reconcile_names_the_scope(snapshot):
@@ -170,8 +175,12 @@ def test_探针预算用完要如实说没试完(tmp_path, monkeypatch):
 
     data = solver_modules()["load_project"](PROJECT_ROOT, base_id="基座01")
     options = {t["任务编号"]: solver_modules()["candidates"](data, t) for t in data.tasks}
-    case = [c for c in json.load(open("eval/cases_e2e.json", encoding="utf-8"))
-            if "隔半天" in c["名"]][0]
+    # 按本文件位置定位：从仓库根跑 pytest 时 cwd 不是 yxcore/，
+    # 写死 "eval/cases_e2e.json" 会 FileNotFoundError（既有的第 6 条基线失败）。
+    from pathlib import Path
+    case_file = Path(__file__).resolve().parents[1] / "eval" / "cases_e2e.json"
+    with case_file.open(encoding="utf-8") as handle:
+        case = [c for c in json.load(handle) if "隔半天" in c["名"]][0]
     patches = [parse_patch(p)[0] for p in case["补丁"]]
 
     monkeypatch.setattr(D, "PROBE_TOTAL_SECONDS", 0)
@@ -190,8 +199,12 @@ def test_探针预算用完要如实说没试完(tmp_path, monkeypatch):
 
     data = solver_modules()["load_project"](PROJECT_ROOT, base_id="基座01")
     options = {t["任务编号"]: solver_modules()["candidates"](data, t) for t in data.tasks}
-    case = [c for c in json.load(open("eval/cases_e2e.json", encoding="utf-8"))
-            if "隔半天" in c["名"]][0]
+    # 按本文件位置定位：从仓库根跑 pytest 时 cwd 不是 yxcore/，
+    # 写死 "eval/cases_e2e.json" 会 FileNotFoundError（既有的第 6 条基线失败）。
+    from pathlib import Path
+    case_file = Path(__file__).resolve().parents[1] / "eval" / "cases_e2e.json"
+    with case_file.open(encoding="utf-8") as handle:
+        case = [c for c in json.load(handle) if "隔半天" in c["名"]][0]
     patches = [parse_patch(p)[0] for p in case["补丁"]]
 
     monkeypatch.setattr(D, "PROBE_TOTAL_SECONDS", 0)
