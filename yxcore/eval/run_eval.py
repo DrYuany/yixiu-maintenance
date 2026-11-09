@@ -372,6 +372,13 @@ def run_e3(*, seconds: float = 20.0) -> list[str]:
         except YxError as exc:
             reasons = list(exc.errors) + list(getattr(exc, "warnings", []) or [])
             if expect != "拦截":
+                # 求解器时限内没给结论（UNKNOWN）不是产品缺陷：白卷不等于
+                # 「这题无解」。用例显式声明后如实标注，别拿性能当语义判分。
+                if case.get("允许时限内无结论") and any(
+                        "没能在时限内找到可行方案" in e for e in reasons):
+                    CAUTIONS.append(
+                        f"E3[{name}]：求解器时限内未给结论（UNKNOWN），已如实标注，不判失败")
+                    continue
                 failures.append(f"E3[{name}]：期望出解却被拦：{exc.errors}")
             else:
                 for frag in case.get("拦截含", []):

@@ -44,10 +44,14 @@ def test_registry_self_check():
 
 
 def test_slot_count_matches_constitution():
-    """37 个可写槽位 = 22 个约束族 + 15 个标量参数。"""
-    assert len(S.SLOTS) == 22
+    """36 个可写槽位 = 21 个约束族 + 15 个标量参数。
+
+    window[窗口,端] 已撤销：改窗口起止是改已批准事实，不是提要求
+    （见 slots.RETIRED_SLOTS 与 README 决策 D14）。
+    """
+    assert len(S.SLOTS) == 21
     assert len(S.PARAM_SLOTS) == 15
-    assert len(S.SLOTS) + len(S.PARAM_SLOTS) == 37
+    assert len(S.SLOTS) + len(S.PARAM_SLOTS) == 36
 
 
 def test_every_slot_has_route_and_reconcile():

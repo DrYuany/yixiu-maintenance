@@ -353,13 +353,11 @@ SLOTS: dict[str, Slot] = {
         reconcile="reconcile_hourly", optional=("项",),
         examples=("明天上午电价按 1.2 元算",),
     ),
-    "window": Slot(
-        name="window", group="J", label="窗口起止假设", route="timeline",
-        index=(("窗口", "window"), ("端", "端")), default=None, default_note="快照原值",
-        value_type="minutes", consumption="candidates", strength="hard",
-        reconcile="reconcile_window", optional=("端",),
-        examples=("窗口03 推迟两天开始",),
-    ),
+    # 窗口起止是已批准海事窗口的客观事实，带审批状态和窗口规则校验，
+    # 不由对话改写（见下方 RETIRED_SLOTS）。用户想约束开工/收工，
+    # 走任务级要求 earliest / deadline_delta；候选上界本来就是
+    # min(window['结束'], task['截止分钟'])，不需要动窗口事实。
+
     # A 组里唯一不是系数的：部分排程开关
     "allow_partial": Slot(
         name="allow_partial", group="A", label="允许少修几个", route="partial",
@@ -367,6 +365,17 @@ SLOTS: dict[str, Slot] = {
         consumption="model", strength="hard", reconcile="reconcile_partial",
         examples=("排不下就少修几个吧",),
         note="也可由 count_max/scope_only 隐式触发，判据只有一份（apply.needs_partial）",
+    ),
+}
+
+
+# 已撤销的槽位：不是「拼写错了」，是业务上明确不做。校验层遇到它要讲清为什么、
+# 并指到正确的表达，别只回一句「没有这个旋钮」。登记在这里也防止以后有人
+# 不留神把「改事实」的能力又加回来。
+RETIRED_SLOTS: dict[str, str] = {
+    "window": (
+        "窗口起止是已批准海事窗口的客观事实，不能由对话缩短或推迟；"
+        "要约束开工用「最早何时开工」，要约束收工用「维修期限」"
     ),
 }
 

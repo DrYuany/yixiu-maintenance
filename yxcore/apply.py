@@ -284,19 +284,6 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
             request.timeline_patches.append(entry)
             request.echo.append(f"{data.stamp(minute)} 的{field_name}按 {value} 算")
             continue
-        if patch.slot == "window":
-            wid = str(patch.index.get("窗口", {}).get("value"))
-            entry = {"kind": "window", "window": wid}
-            which = patch.index.get("端", {}).get("value", "开始")
-            minute = _to_minute(data, value)
-            if minute is None:
-                errors.append("window：时刻解析失败")
-                continue
-            entry["start" if which == "开始" else "end"] = data.stamp(minute)
-            request.timeline_patches.append(entry)
-            request.echo.append(f"{wid} 的{which}改到 {data.stamp(minute)}")
-            continue
-
         # ── 点名单个任务的旋钮，隐含「这个任务必须修」──
         # 有了「本轮不修」分支之后，只写「任务001 不许上别的船」「任务001 不许
         # 早开工」，求解器可以把 001 整个丢掉（y=1），约束就空转了。点名即锁定，

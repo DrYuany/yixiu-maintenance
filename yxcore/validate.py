@@ -392,6 +392,10 @@ def validate(
             continue
         slot = S.SLOTS.get(patch.slot)
         if slot is None:
+            retired = S.RETIRED_SLOTS.get(patch.slot)
+            if retired:
+                errors.append(retired)
+                continue
             near = _nearest_slot(patch.slot)
             hint = f"，最接近的旋钮是「{near}」" if near else ""
             errors.append(f"没有「{patch.slot}」这个旋钮{hint}")

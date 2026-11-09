@@ -239,8 +239,11 @@ def _apply_timeline_patches(data, patches, cfg):
     """时序/结构数据的假设修改（第二期）：海况/逐时/窗口，只改快照不改源文件。
 
     weather：按日设风速/波高（联动重算海况类别与可用小时）或直接设海况类别；
-    hourly：按时设电价/风速（联动重算功率）或直接设功率；
-    window：按窗口编号改起止（假设对比，不表示获得新的海事许可）。
+    hourly：按时设电价/风速（联动重算功率）或直接设功率。
+
+    窗口起止不接受补丁：那是已批准海事窗口的客观事实（带审批状态、受窗口规则
+    校验），不是可以由对话改写的假设。要约束开工或收工，请改任务级的
+    earliest / 截止分钟；候选上界本来就是 min(窗口结束, 任务截止)。
     """
     if not patches:
         return
@@ -294,18 +297,6 @@ def _apply_timeline_patches(data, patches, cfg):
                                else rated * (wind**3 - vi**3) / (vr**3 - vi**3))
             if 'power' in patch:
                 row['功率'] = finite(patch['power'], '功率', 0)
-        elif kind == 'window':
-            target = str(patch['window'])
-            matched = False
-            for w in data.observation_windows:
-                if w['编号'] == target:
-                    if 'start' in patch:
-                        w['开始'] = data.minute(str(patch['start']))
-                    if 'end' in patch:
-                        w['结束'] = data.minute(str(patch['end']))
-                    matched = True
-            if not matched:
-                raise ValueError(f'窗口 {target} 不存在')
         else:
             raise ValueError(f'未知时序补丁类型 {kind}')
 

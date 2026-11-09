@@ -321,7 +321,7 @@ COMPILERS: dict[str, Callable[[Any, _Ctx], None]] = {
 }
 
 # 走数据补丁 / 参数 / 目标 / 部分的槽位不进闭包
-NON_CLOSURE = {"deadline_delta", "part_hours", "part_arrival", "weather", "hourly", "window",
+NON_CLOSURE = {"deadline_delta", "part_hours", "part_arrival", "weather", "hourly",
                "strategy", "allow_partial"}
 
 
