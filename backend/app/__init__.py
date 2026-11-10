@@ -9,7 +9,5 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# LLM 主导理解层（llmfirst 包）在 llm-first/src，进程内 import 引擎要用到。
-_LLMFIRST_SRC = _REPO_ROOT / "llm-first" / "src"
-if str(_LLMFIRST_SRC) not in sys.path:
-    sys.path.insert(0, str(_LLMFIRST_SRC))
+# 注：此处曾挂载 llm-first/src（大一修的 LLM 主导理解层）。小一修分家后
+# 仓库内已无该目录，理解层由 yxcore 承担，故移除这段无效挂载。
