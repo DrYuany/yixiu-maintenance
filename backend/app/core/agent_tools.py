@@ -1792,7 +1792,10 @@ class AgentToolbox:
         scripts = PROJECT_ROOT / "maintenance-milp-modeler" / "scripts"
         if str(scripts) not in sys.path:
             sys.path.insert(0, str(scripts))
-        from app.core import product_writeback
+        # product_writeback.py 是 scripts 目录下的独立模块，不属于 app.core 包。
+        # 写成 `from app.core import ...` 会恒抛 ImportError，让 ledger 工具
+        # 永远返回 status=internal，下发检修单/审批/回填整条闭环不可用。
+        import product_writeback
 
         return product_writeback
 
