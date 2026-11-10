@@ -17,11 +17,12 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / ".deploy"
 
 # 整目录复制（保留内部结构）
+# 注：曾含 "llm-first/src"（大一修的 LLM 主导理解层）。小一修分家后仓库内
+# 无此目录，理解层由 yxcore 承担，故移除该项，避免打包时反复告警跳过。
 WHOLE_DIRS = (
     "backend",
     "dsl_core",
     "maintenance-milp-modeler",
-    "llm-first/src",
     # 小一修的理解层。backend/app/core/yx_engine.py 在模块顶层就 import
     # yxcore.session，漏掉这一项线上会直接 ImportError 起不来。
     "yxcore",
