@@ -25,6 +25,23 @@ _FALSE_OPTIMAL = ("已证明最优", "全局最优", "确定最优", "最优方�
 _COMPLETED_CLAIMS = ("已生成方案", "已求解", "已修改数据", "已下发", "已导出文件", "已生成检修单")
 _INTERNAL_IDS = re.compile(r"(?:fp_|trace_|job_|kind\s*=|bucket_max|scope_only|cap_max|pendingChange|activeFilters)")
 
+# answer_grounding 的契约是「标注，不是拦截」（见该模块文件头）：模型自己算出来的
+# 数（12000×1.2=14400）、系统参数（14 天展望期）本来就追不到工具出处，产品要做的
+# 是把它们标出来让用户自己判断。判分查的是「有没有如实标注」，不是「有没有这类数字」。
+_GROUNDING_CAVEAT_RE = re.compile(
+    r"未经系统核实|没有找到出处|以工具返回的表格为准|未经核实"
+)
+
+# 「给退路」不能只靠用例里猜的几个词：产品措辞会变，但「明确告诉用户下一步」
+# 有几类固定说法。这张表刻意只收带动作/承接的短语，不收「确认」「可以」这类
+# 到处都有的词，避免把真没给退路的回答也放过。
+_EXIT_HINTS = (
+    "算完会", "自动出方案卡", "自动出", "后台跑", "稍等", "稍后",
+    "您可以", "你可以", "可以说", "您说", "照新说法", "重新说",
+    "二选一", "我可以先", "得先", "需要后端", "需要您", "请先",
+    "再跑", "放宽", "告诉我就行", "你想怎么排", "等台账", "你说一句",
+)
+
 PASS, FAIL, UNOBSERVED = "pass", "fail", "unobserved"
 
 
@@ -222,8 +239,15 @@ def evaluate_turn(case_id: str, index: int, expect: dict[str, Any], ev: Evidence
                 from app.core.answer_grounding import grounding_report
                 report = grounding_report(text, sources)
                 bad = report.get("未溯源") or []
-                r.add("数字可溯源", FAIL if bad else PASS,
-                      f"未溯源数字 {bad[:5]}" if bad else f"检查 {report.get('检查数字', 0)} 个数字，全部有出处")
+                if not bad:
+                    r.add("数字可溯源", PASS,
+                          f"检查 {report.get('检查数字', 0)} 个数字，全部有出处")
+                elif _GROUNDING_CAVEAT_RE.search(text):
+                    r.add("数字可溯源", PASS,
+                          f"{len(bad)} 个数字无工具出处，已如实标注 {bad[:5]}")
+                else:
+                    r.add("数字可溯源", FAIL,
+                          f"有 {len(bad)} 个数字无出处却没标注：{bad[:5]}")
             except Exception as exc:  # noqa: BLE001 - 判分器坏了要显式报，不能静默放过
                 r.add("数字可溯源", UNOBSERVED, f"复算出错：{exc}")
 
@@ -296,8 +320,11 @@ def evaluate_turn(case_id: str, index: int, expect: dict[str, Any], ev: Evidence
     if "给退路" in quality:
         options = list(quality["给退路"] or [])
         hit = [o for o in options if _norm(o) in norm]
-        r.add("回答质量[给退路]", PASS if hit else FAIL,
-              f"命中 {hit}" if hit else f"正文没给出任何下一步：{options}")
+        generic = [h for h in _EXIT_HINTS if _norm(h) in norm]
+        ok = bool(hit or generic)
+        r.add("回答质量[给退路]", PASS if ok else FAIL,
+              f"命中 {hit or generic}" if ok
+              else f"正文没给出任何下一步：用例词表 {options} / 通用退路 {len(_EXIT_HINTS)} 类均未命中")
     if quality.get("不甩内部编号"):
         found = _INTERNAL_IDS.findall(text)
         r.add("回答质量[不甩内部编号]", FAIL if found else PASS,
