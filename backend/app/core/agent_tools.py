@@ -27,6 +27,32 @@ _JOB_STATUS_ZH = {
     "CANCELLED": "已取消",
 }
 
+# 「你随便跑一个方案吧」「按现在这些直接算一版」这类话不点名任何旋钮，
+# 填槽层按「表达不了」退回。旧行为是把内部异常文本「大模型没有给出任何补丁」
+# 原样倒给用户：既不接话，也不给待确认预览。业务上这是合法请求——按当前
+# 已生效的旋钮表排一版就行，仍然走「先看预览再确认」的门槛，不越权直接求解。
+_RUN_AS_IS_RE = re.compile(
+    r"(?:随便|直接|就按现在|按当前|不改).{0,10}(?:跑|排|算|出|生成|来).{0,8}(?:方案|沙盘|排程|一版|模型)"
+    r"|(?:跑|排|算|出|生成).{0,5}(?:一个|一版|一份)?\s*(?:方案|沙盘|排程)"
+    r"|看看模型|确认生成沙盘"
+)
+
+
+def _conflict_hint(summary: list[str]) -> str | None:
+    """两条目标互相拉扯时，预览里必须明说，不能装作都能满足。
+
+    「成本压到最低」+「高风险的必须全修」是典型：一个是整体风格，一个是
+    硬约束，可能算不出两全。旧预览只把两条都列成「记下了」，用户看不出
+    这里要取舍，等结果出来才发现被悄悄放弃了一条。
+    """
+    text = "；".join(summary)
+    hard = any(word in text for word in ("至少修", "必须", "最多", "不许"))
+    style = any(word in text for word in ("整体排程风格", "优先"))
+    if hard and style:
+        return ("提醒：成本压到最低，又要求某类任务必须全修，这两条会互相拉扯，"
+                "可能算不出两全的方案；确认后按这张表算，结果出来再看要不要放宽其中一条。")
+    return None
+
 
 def _job_facts(job) -> dict[str, Any]:
     """一个求解任务的事实摘要。
@@ -1702,6 +1728,39 @@ class AgentToolbox:
                  "verbatim": True, "requiresUserConfirmation": False},
                 next_actions=["等待用户点选澄清候选。"],
             )
+        # 直接出方案：只在「填槽层判表达不了」+「用户明确要一版方案」时兜底。
+        # 窗口改期这类业务拒绝也有 turn.拒绝，但拒绝理由不是「没有给出任何补丁」，
+        # 不会落进来，该拒的仍然拒。
+        if (turn.拒绝 and "没有给出任何补丁" in str(turn.拒绝)
+                and _RUN_AS_IS_RE.search(translate_text)
+                and not (turn.新增 or turn.修订 or turn.撤销)):
+            summary = self.yx_engine.session.summary()
+            lines = ["- 这轮不改任何旋钮，按当前已生效的要求排一版："]
+            if summary:
+                lines.extend(f"- {line}" for line in summary)
+            else:
+                lines.append("- 保持当前默认设置")
+            hint = _conflict_hint(summary)
+            if hint:
+                lines.append("")
+                lines.append(hint)
+            lines.append("")
+            lines.append("确认后开始求解；求解只按这张表算，不会自动改数据。")
+            preview = "\n".join(lines)
+            payload = {
+                "kind": "yx", "sourcePrompt": translate_text,
+                "utterance": self.user_message or instruction,
+                "preview": preview, "patches": [], "asIs": True,
+            }
+            self.pending_change = payload
+            if self.on_pending_change:
+                self.on_pending_change(payload)
+            return self._envelope(
+                "needs_confirmation",
+                {"preview": preview, "markdown": preview, "verbatim": True,
+                 "requiresUserConfirmation": True},
+                next_actions=["等待用户确认；确认前不得声称已求解或已生成方案。"],
+            )
         if turn.错误 or turn.拒绝 or not (turn.新增 or turn.修订 or turn.撤销):
             text = "\n".join(f"- {line}" for line in echo)
             return self._as_contract(self._envelope(
@@ -1714,6 +1773,10 @@ class AgentToolbox:
             lines.append("")
             lines.append("现在按这些在排：")
             lines.extend(f"- {line}" for line in summary)
+        hint = _conflict_hint(summary)
+        if hint:
+            lines.append("")
+            lines.append(hint)
         preview = "\n".join(lines)
         payload = {
             "kind": "yx",
@@ -1781,7 +1844,7 @@ class AgentToolbox:
                 "markdown": message,
                 "verbatim": True,
             },
-            next_actions=["告诉用户任务号和大概要等多久；不要再让用户确认一次。"],
+            next_actions=["告诉用户大概要等多久，不要甩 job_ 这类内部任务号；不要再让用户确认一次。"],
         )
 
     @staticmethod

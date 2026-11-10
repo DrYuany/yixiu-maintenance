@@ -698,7 +698,7 @@ class AgentRuntime:
         )
         return self._finalize_response(
             conversation_id,
-            f"真实 CP-SAT 求解已启动，正在后台跑（任务 {job.id}）。算完会自动出方案卡。",
+            "真实 CP-SAT 求解已启动，正在后台跑。算完会自动出方案卡。",
             "solve_started", "P01", [],
             solve_evidence=SolveEvidencePayload(status="UNKNOWN", running=True, phase="queued"),
             solve_job=SolveJobPayload(**job.model_dump()),
