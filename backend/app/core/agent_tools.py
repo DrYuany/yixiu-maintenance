@@ -34,7 +34,14 @@ _JOB_STATUS_ZH = {
 _RUN_AS_IS_RE = re.compile(
     r"(?:随便|直接|就按现在|按当前|不改).{0,10}(?:跑|排|算|出|生成|来).{0,8}(?:方案|沙盘|排程|一版|模型)"
     r"|(?:跑|排|算|出|生成).{0,5}(?:一个|一版|一份)?\s*(?:方案|沙盘|排程)"
-    r"|看看模型|确认生成沙盘"
+    r"|看看模型"
+)
+# 确认类话术是对上一份预览的确认，不是「按现状出一版」的新请求。
+# 「确认生成沙盘」里带「生成沙盘」，会被上面的正则命中，所以整类前缀统一排除：
+# 没有待确认变更时，它该走「还没有待确认的变更」的老路径，
+# 而不是凭空生成一份新预览让用户再确认一次。
+_CONFIRM_PREFIX_RE = re.compile(
+    r"^\s*(?:确认|确定|就按这个|按这个|开始|算吧|可以|好|行|嗯)"
 )
 
 
@@ -54,12 +61,16 @@ def _conflict_hint(summary: list[str]) -> str | None:
     return None
 
 
-def _job_facts(job) -> dict[str, Any]:
+def _job_facts(job, index: int = 1) -> dict[str, Any]:
     """一个求解任务的事实摘要。
 
     刻意不吐 result 全文——那是整份排程，几十 KB，塞进上下文会把用户
     这句话本身挤掉。这里只回答「算出来是哪一版、结论是什么」，
     要看细节让模型去调 read_versions。
+
+    另一个刻意：不吐 job_ 开头的内部编号。真录里模型把 read_jobs 返回的
+    「任务号 job_32b5…」原样抄进回答（OD-01 第7轮 / OD-16 第3轮），
+    用户看到一串看不懂的机器码。改成「第 N 个任务」这种能指代、又不泄内部标识的标签。
     """
     result = job.result or {}
     summary = result.get("summary")
@@ -68,7 +79,7 @@ def _job_facts(job) -> dict[str, Any]:
     else:
         summary_text = str(summary or "")[:400]
     return {
-        "jobId": job.id,
+        "jobRef": f"第{index}个任务",
         "status": job.status,
         "statusZh": _JOB_STATUS_ZH.get(job.status, job.status),
         "solverStatus": job.solverStatus,
@@ -461,17 +472,24 @@ class AgentToolbox:
             {
                 "name": "read_jobs",
                 "description": (
-                    "查本对话派出去的求解任务，只读。传 jobId 查指定那一个；不传就列出最近的几个。"
+                    "查本对话派出去的求解任务，只读。不传就列出最近的几个；"
+                    "要细看某一个，传 jobRef（如「第 1 个任务」，序号来自上一次返回）。"
                     "返回状态（排队中/正在算/算完了/失败了/已取消）、进度、已用时、结果摘要。"
                     "用户问「算完了吗」「刚才那个算得怎么样」「还要多久」时用它，"
                     "不要凭印象回答，也不要说「请到方案页面查看」。"
+                    "任务标识是内部索引，绝不许把 job_ 开头的编号写进回答；"
+                    "用「这次求解」「第 N 个任务」指代即可。"
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "jobRef": {
+                            "type": "string",
+                            "description": "上一次返回里的中文指代，如「第 1 个任务」。省略时列最近的几个。",
+                        },
                         "jobId": {
                             "type": "string",
-                            "description": "任务号（job_ 开头）。省略时列最近的几个。",
+                            "description": "兼容旧调用的内部索引，正常回答不要用它，也不要展示给用户。",
                         },
                         "limit": {
                             "type": "integer",
@@ -1031,22 +1049,33 @@ class AgentToolbox:
                 {"message": "这套工具箱没有接入求解任务仓库，查不到求解进展。"},
                 warnings=["jobs 未注入，read_jobs 不可用。"],
             )
+        job_ref = str(arguments.get("jobRef") or "").strip()
+        if job_ref:
+            match = re.search(r"(\d+)", job_ref)
+            listed = self.jobs.list_by_conversation(self.conversation_id)[:20]
+            pos = int(match.group(1)) - 1 if match else -1
+            job = listed[pos] if 0 <= pos < len(listed) else None
+            if job is None:
+                return self._envelope(
+                    "not_found",
+                    {"message": "没有找到那次求解任务。"},
+                    warnings=["指代可能记错了。"],
+                    next_actions=["不传 jobRef 再查一次，看最近派出去的是哪几个。"],
+                )
+            return self._envelope("ok", {"mode": "one", "count": 1, "jobs": [_job_facts(job, pos + 1)]})
         job_id = str(arguments.get("jobId") or "").strip()
         if job_id:
             job = self.jobs.get(job_id)
             if not job:
                 return self._envelope(
                     "not_found",
-                    {"message": f"没有找到求解任务 {job_id}。", "jobId": job_id},
-                    warnings=["任务号可能记错了。"],
-                    next_actions=["不传 jobId 再查一次，看最近派出去的是哪几个。"],
+                    {"message": "没有找到那次求解任务。"},
+                    warnings=["内部索引可能记错了。"],
+                    next_actions=["不传编号再查一次，看最近派出去的是哪几个。"],
                 )
             if job.conversationId != self.conversation_id:
                 # 别的对话的活不在这儿露，免得串场答错。
-                return self._envelope(
-                    "not_found",
-                    {"message": f"任务 {job_id} 不属于当前对话。"},
-                )
+                return self._envelope("not_found", {"message": "那次求解不属于当前对话。"})
             return self._envelope("ok", {"mode": "one", "count": 1, "jobs": [_job_facts(job)]})
 
         try:
@@ -1063,7 +1092,8 @@ class AgentToolbox:
             )
         return self._envelope(
             "ok",
-            {"mode": "index", "count": len(jobs), "jobs": [_job_facts(job) for job in jobs]},
+            {"mode": "index", "count": len(jobs),
+             "jobs": [_job_facts(job, index) for index, job in enumerate(jobs, 1)]},
         )
 
     def _read_single(
@@ -1733,6 +1763,7 @@ class AgentToolbox:
         # 不会落进来，该拒的仍然拒。
         if (turn.拒绝 and "没有给出任何补丁" in str(turn.拒绝)
                 and _RUN_AS_IS_RE.search(translate_text)
+                and not _CONFIRM_PREFIX_RE.match(translate_text)
                 and not (turn.新增 or turn.修订 or turn.撤销)):
             summary = self.yx_engine.session.summary()
             lines = ["- 这轮不改任何旋钮，按当前已生效的要求排一版："]
@@ -1838,7 +1869,8 @@ class AgentToolbox:
         return self._envelope(
             "submitted",
             {
-                "jobId": outcome.get("jobId"),
+                # 不再把 job_ 内部编号回给模型：任务已由 runtime 建好并启动，
+                # 模型随后想查进度就用 read_jobs 的「第 N 个任务」指代。
                 "message": message,
                 # "已派出/正在求解"是对用户的承诺，也不许模型改口径。
                 "markdown": message,

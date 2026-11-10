@@ -35,7 +35,9 @@ DATA_DIRS = ("phase1-demo", "模型参数", "场景评测/五组基座数据")
 
 SKIP_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".git", "node_modules"}
 SKIP_SUFFIX = {".pyc", ".pyo"}
-SKIP_FILES = {".env.local"}
+# traces.jsonl 是本机录制下来的线上评测证据（真实回答、内部状态快照），
+# 只用于离线判分，不该随源码一起传到公网沙箱。
+SKIP_FILES = {".env.local", "traces.jsonl"}
 
 # 云端启动入口。发布平台把 startCmd 直接交给进程执行、不经过 shell，
 # 命令里写 `--port $PORT` 时 `$PORT` 会原样传给 uvicorn，报

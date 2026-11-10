@@ -112,6 +112,50 @@ def test_window_fact_rule_is_in_system_prompt() -> None:
     assert "part_hours" in src, "点名禁止甩内部术语"
 
 
+def test_read_jobs_never_hands_internal_id_to_model() -> None:
+    """第三次真录发现 job_ 换了个出口：read_jobs 的任务号被模型原样抄进回答。"""
+    from app.core.agent_tools import _job_facts
+
+    job = SimpleNamespace(
+        id="job_32b5c96702e8", status="RUNNING", solverStatus="UNKNOWN",
+        phase="running", progressPercent=37, statusMessage="正在求解",
+        elapsedSeconds=15, submittedAt="", finishedAt=None,
+        needsUserDecision=False, result={}, error=None,
+        conversationId="c-eval",
+    )
+    facts = _job_facts(job, 1)
+    assert facts["jobRef"] == "第1个任务"
+    assert "jobId" not in facts and "job_" not in str(facts)
+
+    fake_jobs = SimpleNamespace(
+        list_by_conversation=lambda _cid: [job],
+        get=lambda _id: job,
+    )
+    toolbox = AgentToolbox(
+        conversation_id="c-eval",
+        versions=SimpleNamespace(list_by_conversation=lambda _cid: []),
+        model_artifacts=None, jobs=fake_jobs,
+    )
+    listed = toolbox.execute("read_jobs", {})
+    assert listed["status"] == "ok"
+    assert "job_" not in str(listed), "列表里不该出现内部编号"
+    one = toolbox.execute("read_jobs", {"jobRef": "第 1 个任务"})
+    assert one["status"] == "ok" and one["data"]["jobs"][0]["jobRef"] == "第1个任务"
+
+
+def test_confirmation_utterance_is_not_run_as_is_request() -> None:
+    """「确认生成沙盘」是确认上一份预览，不能被当成「按现状排一版」的新请求。"""
+    engine = SimpleNamespace(
+        say=lambda text, timeout=90: _turn(refusal="大模型没有给出任何补丁"),
+        session=SimpleNamespace(summary=lambda: []),
+    )
+    captured: list[dict] = []
+    result = _toolbox(engine, "确认生成沙盘", captured).execute("solve", {})
+    assert result["status"] == "clarify", result
+    assert not captured, "确认类话术不该凭空生成一份新预览"
+    assert _RUN_AS_IS_RE.search("你随便跑一个方案吧，然后让我看看模型")
+
+
 def test_refusal_with_next_step_is_recognised_as_exit() -> None:
     """拒绝类回答把「那你能做什么」交回用户，也是退路；尺子补了这类说法。"""
     from app.evals.online_scorers import Evidence
