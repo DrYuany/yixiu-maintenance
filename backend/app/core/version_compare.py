@@ -173,8 +173,8 @@ def _cost_gap(version: WindowVersion) -> float | None:
 def _cost_gap_metric(version: WindowVersion) -> str:
     """这个差距到底属于哪个目标，别把「加权目标最优」说成「成本最优」。
 
-    求解日志里除了业务阶段还混着「确定性决胜」条目，那些只是打破平局、
-    不是业务目标，数阶段时得先把它们摘出去。
+    分层模式的求解日志里除了业务阶段还混着「确定性决胜」条目，那些只是打破平局、
+    不是业务目标，数阶段时得先把它们摘出去。加权模式已经不产生这些条目。
     """
     stages = [
         item

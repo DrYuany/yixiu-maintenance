@@ -23,7 +23,11 @@ STRATEGIES = ('成本最低优先','高风险优先抢修','最短完成优先',
 # 阶段数没有硬上限，也不该有：它是两段拼出来的
 #   业务阶段 = 目标模板 references/四种目标模板.json 声明的顺序（按指标去重后），
 #              当前四套模板分别 4/8/4/6 段，加 partial 前置最多 8 段；
-#   决胜阶段 = 每 60 个选择变量一段，随任务数×候选数×作业线数增长，可以几十段。
+#   决胜阶段 = 每 60 个选择变量一段，随任务数×候选数×作业线数增长，可以几十段；
+#              **只在分层模式跑**。加权模式只承诺加权目标的最优值，不承诺逐条目
+#              复现（见 tests/test_product_runtime.py 的复现用例只对分层跑），
+#              再花几十段去"挑同分卷里编号最小那张"既买不到承诺，还会把已证到
+#              最优的业务目标连坐降成 FEASIBLE。
 # 控制手段不是"限条数"而是"限总时限"：所有阶段共用同一个预算（见 solve_budget），
 # 但按剩余段数均分——前一段花超了，后一段仍有一份自己的时间；全部分完还不够，
 # 就以 TIME_LIMIT 收工并如实记录，不会假装最优。
@@ -543,6 +547,9 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     started=time.monotonic();logs=[];selected=None
     last_cost=None
     termination_reason='COMPLETED';business_complete=False;tie_complete=False;last_status=None
+    # 决胜段是分层模式「逐条目复现」的配套。加权模式不跑，也不能因为没挑代表
+    # 就把已经证到最优的加权目标连坐降成 FEASIBLE。
+    tie_applicable = mode == '分层'
 
     def _rehint():
         """把当前解交给下一阶段当起点。
@@ -630,7 +637,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     business_complete=(len(business_logs)==planned
                        and all(r['状态']=='OPTIMAL' or r.get('最优性')=='容差内最优' for r in business_logs))
     strictly_optimal=(len(business_logs)==planned and all(r['状态']=='OPTIMAL' for r in business_logs))
-    if business_complete:
+    if business_complete and tie_applicable:
         ordered=sorted(choices,key=lambda item:(item[0]['任务编号'],item[0]['开始'],item[0]['作业线']))
         chunks=[ordered[index:index+60] for index in range(0,len(ordered),60)]
         for index,chunk in enumerate(chunks,1):
@@ -676,10 +683,14 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     # 单独给一个原因，版本对比和模型问答读到它就知道该说"未证明"。
     if termination_reason=='COMPLETED' and degraded:
         termination_reason='STAGE_TIME_LIMIT'
+    # 「全部证完」的口径按模式分开：加权只看业务目标，分层还要决胜段也全证完。
+    # 以前统一要求 tie_complete，加权模式即使主目标 OPTIMAL 也因为没挑代表
+    # 被降成 FEASIBLE / 未证明最优，用户读到的「未证明」其实是「没证明编号最小」。
+    fully_proven = strictly_optimal and (tie_complete or not tie_applicable) and termination_reason=='COMPLETED'
     if selected is None:
         solve_status='INFEASIBLE' if last_status==cp_model.INFEASIBLE else 'UNKNOWN'
     else:
-        solve_status='OPTIMAL' if strictly_optimal and tie_complete and termination_reason=='COMPLETED' else 'FEASIBLE'
+        solve_status='OPTIMAL' if fully_proven else 'FEASIBLE'
     # 最优性一说清楚，别让"解状态 FEASIBLE"背两种意思：
     #   已证明最优 / 容差内最优（成本阶段差距 ≤ 参数总表允许值）/ 未证明最优
     if solve_status=='OPTIMAL':
@@ -703,8 +714,10 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         # 来源只描述"这份排程是谁给的"。selected 为空就是没解出来，
         # 不再用旧方案的来源字段去冒充。
         '方案来源':'CP_SAT' if selected is not None else None,
-        '分层全部最优':strictly_optimal and tie_complete and termination_reason=='COMPLETED',
-        '确定性决胜完成':tie_complete,
+        '分层全部最优':fully_proven,
+        # 三态：True/False 只属于分层；加权不跑决胜段，记「不适用」而不是 False，
+        # 免得 pipeline / 求解说明把「不适用」当成「没证完」再报一次假告警。
+        '确定性决胜完成':tie_complete if tie_applicable else '不适用',
         '阶段计划':plan,'跳过阶段数':skipped,
         '阶段':logs,'总耗时秒':time.monotonic()-started,'模型成本':last_cost,'诊断模型':partial,
         '模型产物文件':artifact['artifactFile'],'模型产物指纹':artifact_fingerprint}
@@ -742,7 +755,8 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode='�
                                 'tableSeconds':budget['tableSeconds'],'envCap':budget['envCap'],
                                 'requestedSeconds':budget['requestedSeconds']},
                         '分层进度':'0/0','计划阶段数':0,'执行阶段数':0,'容差内阶段':[],'未达最优阶段':[],
-                        '诊断模型':False,'模型成本':0,'分层全部最优':True,'确定性决胜完成':True,
+                        '诊断模型':False,'模型成本':0,'分层全部最优':True,
+                        '确定性决胜完成':True if mode=='分层' else '不适用',
                         '求解器参数':{'num_search_workers':WORKERS,'random_seed':17,
                                       'max_time_in_seconds':budget['seconds'],
                                       'relative_gap_limit':budget['gapLimit'],

@@ -66,6 +66,18 @@ def test_tie_not_proven_never_claims_time_ran_out() -> None:
     assert "时限用尽" not in text
 
 
+def test_weighted_no_tie_break_is_not_called_unfinished() -> None:
+    """加权产物写「不适用」，不许解释成分层那种「决胜没跑完」。"""
+    text = explain_not_optimal(_solver(
+        终止原因="TIME_LIMIT",
+        确定性决胜完成="不适用",
+        未达最优阶段=["标准化加权目标"],
+    ))
+    assert "确定性决胜" not in text
+    assert "整体时间用尽" in text
+    assert "标准化加权目标" in text
+
+
 def test_empty_record_still_explains_without_inventing() -> None:
     text = explain_not_optimal({})
     assert "未证明最优的原因" in text

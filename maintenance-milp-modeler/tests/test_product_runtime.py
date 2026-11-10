@@ -43,7 +43,8 @@ class ProductRuntimeTests(unittest.TestCase):
         data.tasks = data.tasks[:3]
         with tempfile.TemporaryDirectory() as out:
             # 分层模式的保证是「全阶段证最优 + 排程可复现」，本身就是慢路径；
-            # 默认模式（加权）的诚实保证另有专门用例 test_weighted_default_is_fast_and_honest。
+            # 默认模式（加权）不跑决胜段，另有专门用例
+            # test_weighted_default_skips_tie_break_and_stays_optimal。
             result = recommend(data, Path(out), seconds=30, mode='分层')
             self.assertTrue(result['求解']['有解'])
             self.assertIn(result['求解']['解状态'], {'OPTIMAL', 'FEASIBLE'})
@@ -56,16 +57,29 @@ class ProductRuntimeTests(unittest.TestCase):
             self.assertTrue((Path(out) / '推荐报告.html').exists())
             verify_schedule(data, result['推荐']['排程'])
 
-    def test_weighted_default_is_fast_and_honest(self):
-        """默认模式（加权）：快，且没证到最优就如实报 FEASIBLE / TIE_NOT_PROVEN。"""
+    def test_weighted_default_skips_tie_break_and_stays_optimal(self):
+        """默认加权不跑决胜段，最优性只由加权目标决定。
+
+        以前加权也跟着跑几十段决胜，某一段没证到最优（TIE_NOT_PROVEN）就把
+        已经 OPTIMAL 的加权目标连坐降成 FEASIBLE / 未证明最优。现在决胜段是
+        分层专属；加权产物里「确定性决胜完成」记「不适用」，也不该出现
+        solver_model_tie_*.pbtxt。
+        """
         data = load_project(PROJECT, as_of='2026-10-23T18:00:00+08:00')
         data.tasks = data.tasks[:3]
         with tempfile.TemporaryDirectory() as out:
             result = recommend(data, Path(out), seconds=30)
-            self.assertTrue(result['求解']['有解'])
-            self.assertEqual(result['求解']['目标模式'], '加权')
-            self.assertEqual(result['求解']['解状态'], 'FEASIBLE')
-            self.assertIn(result['求解']['终止原因'], {'COMPLETED', 'TIME_LIMIT', 'TIE_NOT_PROVEN'})
+            info = result['求解']
+            self.assertTrue(info['有解'])
+            self.assertEqual(info['目标模式'], '加权')
+            self.assertEqual(info['解状态'], 'OPTIMAL')
+            self.assertEqual(info['最优性'], '已证明最优')
+            self.assertEqual(info['终止原因'], 'COMPLETED')
+            self.assertEqual(info['确定性决胜完成'], '不适用')
+            self.assertEqual(info['分层进度'], '1/1')
+            self.assertFalse([s for s in info['阶段']
+                              if str(s['目标']).startswith('确定性决胜')])
+            self.assertEqual(list(Path(out).glob('solver_model_tie_*.pbtxt')), [])
             self.assertTrue(result['推荐']['复核通过'])
             self.assertEqual(result['推荐']['完成任务数'], 3)
             verify_schedule(data, result['推荐']['排程'])
@@ -75,9 +89,14 @@ class ProductRuntimeTests(unittest.TestCase):
         data.tasks = data.tasks[:2]
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
             # 排程逐条目可复现是分层（全证最优 + 确定性决胜）的模式保证；
-            # 加权在时限内同一加权目标常有多个等价排程，FEASIBLE 本来就不保证复现。
+            # 加权模式不跑决胜段，只承诺加权目标最优，不承诺方案逐条目一致。
             result_a = recommend(data, Path(first), seconds=8, mode='分层')
             result_b = recommend(data, Path(second), seconds=8, mode='分层')
+            # 分层仍然真的跑了决胜段：别把「加权跳过决胜段」误推广到分层。
+            self.assertEqual(result_a['求解']['确定性决胜完成'], True)
+            self.assertTrue([s for s in result_a['求解']['阶段']
+                             if str(s['目标']).startswith('确定性决胜')])
+            self.assertTrue(list(Path(first).glob('solver_model_tie_*.pbtxt')))
 
         self.assertEqual(result_a['求解']['解状态'], 'OPTIMAL')
         self.assertEqual(result_b['求解']['解状态'], 'OPTIMAL')
