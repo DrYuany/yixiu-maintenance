@@ -85,7 +85,8 @@ class YxEngine:
             windows=windows,
             includedInCandidatePool=True,
             solveJobId=solve_job_id,
-            modelFingerprint=result.get("指纹"),
+            modelFingerprint=(result.get("指纹")
+                              or (result.get("求解") or {}).get("模型产物指纹")),
         )
 
     @staticmethod
@@ -94,7 +95,10 @@ class YxEngine:
         info = result.get("求解") or {}
         return {
             "strategy": info.get("策略"),
-            "objectiveMode": "加权" if info.get("权重") else "分层",
+            # 以前靠 info["权重"] 反推模式，可求解结果里根本没有这个键，
+            # 于是每次都写成「分层」。直接读定稿字段，不再猜。
+            "objectiveMode": info.get("目标模式") or "加权",
+            "weights": info.get("权重"),
             "windowCount": len(data.windows or []),
             "topWindowId": (data.windows or [{}])[0].get("编号"),
             "scheduledTaskCount": rec.get("完成任务数", 0),

@@ -120,7 +120,8 @@ def run(
         from .diagnose import explain_infeasible
 
         info["策略"] = strategy
-        info["权重"] = request.weights
+        # solve() 已在 RunSpec 里定稿权重；这里只补一个可能为空的回显，不许覆盖。
+        info.setdefault("权重", request.weights)
         # _diagnose=False 是归因探针在调用，别再递归展开一次诊断
         reason = (explain_infeasible(patches, data, options, info, request, seconds=seconds)
                   if _diagnose else "这一条单独就排不出方案")
@@ -144,8 +145,11 @@ def run(
             f"这次是部分排程：{total} 个任务里排了 {done} 个，"
             f"其余 {total - done} 个这轮不修（{reason}）"
         ]
-    info["策略"] = strategy
-    info["权重"] = request.weights
+    # 策略与权重都已在 RunSpec 定稿并写进 info，这里只补缺、不许覆盖：
+    # 以前 info["权重"] = request.weights 会把定稿值改回 None，正是「同一个
+    # 事实各写一份」的最后一处漏点。
+    info.setdefault("策略", strategy)
+    info.setdefault("权重", request.weights)
     audit = reconcile(patches, Ctx(selected=selected, rec=recommended, data=data,
                                    base_data=base_data, info=info, request=request))
     # 违例是"对不上"，未核对是"没法证明对得上"——两者都不能出方案。
@@ -153,17 +157,10 @@ def run(
     if audit["违例"] or audit["未核对"]:
         raise YxError(["意图对账未通过：" + describe_audit(audit)], warnings, code="对账")
     audit_text = describe_audit(audit)
-    # 状态诚实性：没证到最优就要说出来。时限内波动是求解器的正常行为，
-    # 但「方案可能随机器而变」这件事必须写进产物，不能让复现性悄悄失效。
-    # 决胜段只在分层模式跑：主目标证到 OPTIMAL 不等于整份方案可复现，
-    # 等价最优解之间还有「确定性决胜」阶段，它若停在 UNKNOWN（终止原因
-    # TIE_NOT_PROVEN），两次求解会给出同样成本、不同船线/开工的方案。
-    # 加权模式不跑决胜段，产物里记「不适用」，这里只数业务阶段是否证到最优。
-    # 只数「未达最优阶段」会漏掉决胜这一格，把 FEASIBLE 误报成「已证最优」，
-    # 复现性测试就被冤枉成缺陷。
+    # 状态诚实性：业务阶段没证到最优就要说出来，并写进产物。
+    # 确定性决胜段已整块撤销，不再有「主目标证优、但没证明挑的是编号最小那张」
+    # 这种把 OPTIMAL 连坐降级的假告警。
     unproven = list(info.get("未达最优阶段") or [])
-    if info.get("确定性决胜完成") is False:
-        unproven.append("确定性决胜")
     if unproven:
         warnings = list(warnings) + [
             f"这些目标没证到最优（{'、'.join(unproven)}）：方案在时限内波动，"

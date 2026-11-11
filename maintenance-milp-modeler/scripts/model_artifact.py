@@ -211,14 +211,17 @@ def build_model_artifact(
     model: Any,
     choices: list[tuple[dict[str, Any], Any]],
     stages: list[tuple[str, str, Any]],
-    strategy: str,
-    mode: str,
-    weights: dict[str, float] | None,
-    limits: dict[str, Any] | None,
-    partial: bool,
+    spec: Any,
     solver_parameters: dict[str, Any],
     model_fingerprint: str,
 ) -> dict[str, Any]:
+    # 描述性字段一律从 RunSpec 的唯一定稿取，不再由调用方逐个传、也不再从
+    # data.params 各读一遍（那正是权重 / 展望期曾经各写一份、互相脱节的原因）。
+    strategy = spec.strategy
+    mode = spec.facts()['目标模式']
+    weights = spec.weights
+    limits = spec.limits
+    partial = spec.partial
     proto = model.Proto()
     variable_names = [variable.name for variable in proto.variables]
     variable_groups = Counter(_variable_group(variable.name) for variable in proto.variables)
@@ -259,7 +262,7 @@ def build_model_artifact(
     ]
     constraints.sort(key=lambda item: item["count"], reverse=True)
     objective_stages = []
-    effective_weights = getattr(data, "effective_weights", None) or weights or {}
+    effective_weights = weights
     for index, (name, sense, expression) in enumerate(stages, start=1):
         expression_preview = _expression_preview(expression)
         if name == "标准化加权目标":
@@ -292,7 +295,7 @@ def build_model_artifact(
     choice_count = len(choices)
     line_count = min(int(data.params["最多作业线数"]), int(data.params["人员总上限"]))
     window_count = len(data.windows)
-    horizon_days = data.params.get("未修惩罚展望期（天）", 14)
+    horizon_days = spec.horizon_days
     alpha_source = data.meta.get("剩余出力系数来源", "未标注")
     pricing_window = getattr(data, "pricing_window", None)
     penalty_records = list(getattr(data, "penalty_records", None) or [])

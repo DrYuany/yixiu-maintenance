@@ -58,6 +58,28 @@ MATH_PASSTHROUGH = re.compile(
 # not forced through this path.
 PASSTHROUGH_TOOLS = {"read_versions", "read_environment", "solve", "submit_change"}
 
+
+def math_view_arguments(message: str, name: str, arguments: dict) -> dict:
+    """问公式/权重却选了 costs 视图时，就地纠正成目标函数视图。
+
+    原样输出快路径会把工具返回的 markdown 直接交卷、连复核机会都没有
+    （线上实测连问两次都拿到同一张成本构成表）。与其等模型自己发现，
+    不如在工具执行前把参数改对；返回新字典，不改调用方持有的对象。
+    """
+    if name != "read_versions":
+        return arguments
+    asks_math = bool(MATH_PASSTHROUGH.search(message)) or bool(
+        re.search(r"权重|目标函数|加权|系数", message))
+    if not asks_math:
+        return arguments
+    if (arguments.get("section") != "costs"
+            and "costs" not in (arguments.get("include") or [])):
+        return arguments
+    fixed = dict(arguments)
+    fixed["section"] = "objective"
+    fixed["include"] = ["model"]
+    return fixed
+
 # 这几个工具的结果是"契约"：用户据此决定批不批、要不要等求解。
 # 让模型自由转述，就会出现"预览说排除了 5 个、模型里一条排除都没有"——
 # 用户批准的是模型的话，执行的是另一份 DSL，中间没有任何绑定。
@@ -195,7 +217,10 @@ class ConversationAgent:
                 label = TOOL_LABELS.get(block.name, block.name)
                 if on_status:
                     on_status(f"{label}…")
-                result = toolbox.execute(block.name, dict(block.input or {}))
+                result = toolbox.execute(
+                    block.name,
+                    math_view_arguments(message, block.name, dict(block.input or {})),
+                )
                 data = result.get("data")
                 if (
                     block.name in PASSTHROUGH_TOOLS
@@ -356,9 +381,11 @@ class ConversationAgent:
 检修单和执行反馈（当前可能为空）。
 
 产品事实（可以直接回答，不需要先有方案）：
-- 求解器是 Google OR-Tools CP-SAT，解的是有界 0-1 整数调度模型，目标与约束都是线性的。
+- 求解器是 Google OR-Tools CP-SAT，解的是有界 0-1 整数调度模型。目标固定为**一段
+  标准化加权目标**（具体权重见方案详情「数学模型」页），约束是线性的；用户能改的是
+  权重和业务约束，不能改目标形状，也不存在「分层求解」。
 - 求解器默认多线程并行搜索（可设 MWA_SOLVER_WORKERS=1 切单线程归档），时限计入模型指纹；
-  正常跑完的阶段结论可复现，某一段在时间被截断时不同次运行可能取到不同中间解，
+  正常证到最优的结论可复现，时间被截断时不同次运行可能取到不同中间解，
   此时解状态会如实写「未证明最优」，不要说成「一定一样」。
 - 流程是：自然语言 → 固定的模型契约 → 真实求解 → 独立复核 → 版本入库。
 - 求解任务是并发、互不覆盖的：每次「确认生成沙盘」都新建一个独立任务，各自写入独立版本；

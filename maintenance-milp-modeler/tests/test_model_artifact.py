@@ -11,14 +11,15 @@ sys.path.insert(0, str(SCRIPTS))
 
 from model_artifact import build_model_artifact  # noqa: E402
 from product_data import load_project  # noqa: E402
-from product_planner import build_model, candidates  # noqa: E402
+from product_planner import RunSpec, build_model, candidates  # noqa: E402
 
 
 class ModelArtifactTest(unittest.TestCase):
     def test_model_artifact_uses_actual_solver_structure(self) -> None:
         data = load_project(ROOT, "基座01")
         options = {task["任务编号"]: candidates(data, task) for task in data.tasks}
-        model, choices, stages, _ = build_model(data, options)
+        spec = RunSpec.resolve(data, strategy="高风险优先抢修")
+        model, choices, stages, _ = build_model(data, options, spec)
 
         artifact = build_model_artifact(
             data=data,
@@ -26,11 +27,7 @@ class ModelArtifactTest(unittest.TestCase):
             model=model,
             choices=choices,
             stages=stages,
-            strategy="高风险优先抢修",
-            mode="分层",
-            weights=None,
-            limits=None,
-            partial=False,
+            spec=spec,
             solver_parameters={
                 "num_search_workers": 1,
                 "random_seed": 17,
@@ -55,18 +52,15 @@ class ModelArtifactTest(unittest.TestCase):
         """不修惩罚不能只藏在常数里：取值、α 出处、计价窗都要能逐条核对。"""
         data = load_project(ROOT, "基座01")
         options = {task["任务编号"]: candidates(data, task) for task in data.tasks}
-        model, choices, stages, _ = build_model(data, options)
+        spec = RunSpec.resolve(data)
+        model, choices, stages, _ = build_model(data, options, spec)
         artifact = build_model_artifact(
             data=data,
             options=options,
             model=model,
             choices=choices,
             stages=stages,
-            strategy="成本最低优先",
-            mode="加权",
-            weights=None,
-            limits=None,
-            partial=False,
+            spec=spec,
             solver_parameters={},
             model_fingerprint="test-penalty",
         )

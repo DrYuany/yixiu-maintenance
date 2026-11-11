@@ -22,7 +22,7 @@ def main(argv=None):
     plan=sub.add_parser('plan',help='求解、复核、生成报告并保存运行')
     plan.add_argument('--base',default='基座01');plan.add_argument('--as-of')
     plan.add_argument('--input');plan.add_argument('--output');plan.add_argument('--seconds',type=float,default=60)
-    plan.add_argument('--strategy',default='成本最低优先');plan.add_argument('--mode',default='加权')
+    plan.add_argument('--strategy',default='成本最低优先');plan.add_argument('--mode',default='加权',help='固定为加权；分层目标已撤销')
     plan.add_argument('--weights');plan.add_argument('--limits');plan.add_argument('--overrides')
     draft=sub.add_parser('draft',help='根据推荐生成待审批检修单')
     draft.add_argument('run_id');draft.add_argument('--windows',nargs='*');draft.add_argument('--accept-partial',action='store_true');draft.add_argument('--key')

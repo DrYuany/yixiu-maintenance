@@ -18,7 +18,7 @@ class PlanRequest(BaseModel):
     input_file: str | None = Field(None,description='真实数据输入包路径')
     seconds: float = Field(default=60,gt=0,le=300,description='求解时间上限（秒）')
     strategy: str = Field('成本最低优先',description='高风险优先抢修、成本最低优先、最短完成优先、检修最多器件优先')
-    mode: str = Field('加权',description='分层或加权')
+    mode: str = Field('加权',description='固定为加权；分层目标已撤销，传其它值会被拒绝')
     weights: dict | None = Field(None,description='加权模式的指标权重')
     limits: dict | None = Field(None,description='预算、最低完成量等约束')
     overrides: dict | None = Field(None,description='经过登记的运行参数覆盖')

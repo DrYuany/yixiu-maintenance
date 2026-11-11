@@ -11,6 +11,7 @@ import math
 import os
 import time
 from collections import defaultdict
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from ortools.sat.python import cp_model
@@ -20,18 +21,96 @@ from solve_budget import resolve as resolve_budget
 MONEY = 1000000  # micro-yuan; all costs are reported in yuan
 STRATEGIES = ('成本最低优先','高风险优先抢修','最短完成优先','检修最多器件优先')
 
-# 阶段数没有硬上限，也不该有：它是两段拼出来的
-#   业务阶段 = 目标模板 references/四种目标模板.json 声明的顺序（按指标去重后），
-#              当前四套模板分别 4/8/4/6 段，加 partial 前置最多 8 段；
-#   决胜阶段 = 每 60 个选择变量一段，随任务数×候选数×作业线数增长，可以几十段；
-#              **只在分层模式跑**。加权模式只承诺加权目标的最优值，不承诺逐条目
-#              复现（见 tests/test_product_runtime.py 的复现用例只对分层跑），
-#              再花几十段去"挑同分卷里编号最小那张"既买不到承诺，还会把已证到
-#              最优的业务目标连坐降成 FEASIBLE。
-# 控制手段不是"限条数"而是"限总时限"：所有阶段共用同一个预算（见 solve_budget），
-# 但按剩余段数均分——前一段花超了，后一段仍有一份自己的时间；全部分完还不够，
-# 就以 TIME_LIMIT 收工并如实记录，不会假装最优。
-# 成本阶段额外允许参数总表里的相对差距（默认 1%），整数阶段仍要求证明最优。
+# 一次求解只有一处定稿：RunSpec。
+#
+# 以前「默认权重」是在最里层 build_model 才从模板取出来的，取完挂到
+# data.effective_weights 上；外面的 solve / recommend / 产物生成器手里仍旧是那个
+# None 入参，于是 结果.json、model_artifact.json、公式页各写各的：有的写 null、
+# 有的靠猜、有的把权重塞进中文字符串。同类脱节在「时限」上发生过一次（界面同时
+# 出现 300/60/30 三个数），当时只把那一组收敛到 solve_budget，没把做法推广开。
+#
+# 现在 RunSpec.resolve() 在入口一次定稿：策略、权重、目标模式、时限、容差、
+# 展望期、业务约束、DSL 闭包。之后全链路只读 spec，下游不许再解释一次默认值。
+# 对外字段一律由 spec.facts() 给出，由 tests/test_run_spec_consistency.py 守门。
+#
+# 本产品只有一个目标函数（标准化加权），没有分层/字典序，也没有确定性决胜段。
+# 阶段数恒为 1，整份时限都给这一段；成本项允许参数总表的相对差距（默认 1%）。
+OBJECTIVE_MODE = '加权'
+# 加权目标允许出现的指标：模板四项 + 小一修登记的三个口径 + 分级完成数。
+# 与 build_model() 的 metrics 同一套名字，定稿点就能先拦住拼错的权重名。
+WEIGHT_METRICS = frozenset({
+    '总经济成本', '现金支出', '完成任务数', '最后完工时间', '完工时间和',
+    '人工费', '备件费', '船舶艘天',
+    '高严重完成数', '中严重完成数', '低严重完成数',
+    '高严重完工时间和', '中严重完工时间和', '低严重完工时间和',
+})
+
+
+@dataclass(frozen=True)
+class RunSpec:
+    """一次求解的定稿配置。不可变，四处出口只读它，不再各取一份默认值。"""
+
+    strategy: str
+    weights: dict
+    seconds: float
+    gap_limit: float
+    horizon_days: float
+    limits: dict
+    partial: bool
+    extra_constraints: object
+    hint: object
+    on_solver: object
+    cancelled: object
+    model_fingerprint: str | None
+    budget: dict
+
+    @classmethod
+    def resolve(
+        cls, data, *, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None,
+        seconds=None, gap_limit=None, limits=None, partial=False,
+        extra_constraints=None, hint=None, on_solver=None, cancelled=None,
+        model_fingerprint=None,
+    ):
+        """把「用户改了什么 + 模板默认是什么」在这里一次算清楚。"""
+        if strategy not in STRATEGIES:
+            raise ValueError('未知策略')
+        if mode not in (None, '', OBJECTIVE_MODE):
+            raise ValueError(
+                f'目标模式「{mode}」已撤销：本产品固定使用标准化加权目标，'
+                '不再提供分层求解；请去掉 mode 参数或设为「加权」。')
+        registry = json.loads(
+            (Path(__file__).resolve().parents[1] / 'references/四种目标模板.json').read_text(encoding='utf-8'))
+        template = next((t for t in registry['模板'] if t['模板编号'] == strategy), None)
+        if template is None:
+            raise ValueError('未知策略，需要澄清或扩展提案，不能自动猜目标')
+        effective = dict(weights) if weights is not None else dict(template['加权默认值'])
+        if (not effective or set(effective) - WEIGHT_METRICS
+                or any(not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0
+                       for v in effective.values())
+                or not any(effective.values())):
+            raise ValueError('权重需非负有限、至少一项为正，并使用已登记指标')
+        budget = resolve_budget(getattr(data, 'params', None),
+                                requested_seconds=seconds, requested_gap=gap_limit)
+        return cls(
+            strategy=strategy, weights=effective,
+            seconds=budget['seconds'], gap_limit=budget['gapLimit'],
+            horizon_days=float((getattr(data, 'params', None) or {}).get('未修惩罚展望期（天）', 14)),
+            limits=dict(limits or {}), partial=bool(partial),
+            extra_constraints=extra_constraints, hint=hint, on_solver=on_solver,
+            cancelled=cancelled, model_fingerprint=model_fingerprint, budget=budget,
+        )
+
+    def facts(self) -> dict:
+        """所有产物 / 报告 / 结果摘要共用的字段表；新增出口只能从这里取。"""
+        return {
+            '目标模式': OBJECTIVE_MODE,
+            '权重': dict(self.weights),
+            '自定义权重': dict(self.weights),
+            '策略': self.strategy,
+            '展望期天数': self.horizon_days,
+            '时限秒': self.seconds,
+            '容差': self.gap_limit,
+        }
 
 
 def _worker_count():
@@ -287,14 +366,14 @@ def _penalty_window(data, options, horizon_minutes):
     return anchor,window_end,requested_end>forecast_end
 
 
-def build_model(data, options, partial=False, strategy='成本最低优先', mode='加权', weights=None, limits=None, extra_constraints=None, custom_stages=None):
+def build_model(data, options, spec: RunSpec):
     m=cp_model.CpModel();choices=[];task_vars={};cost_terms=[];cash_terms=[];constant=0
     # 小一修（小一修/）要按「人工费 / 备件费 / 船舶艘天」三个口径设上限和权重，
     # 这三个量不进目标函数，只是登记进 metrics 供注入口闭包和目标加权取用。
     # 纯增量：不加任何约束，不改已有任何一项成本的算法。
     labor_terms=[];spare_terms=[];rent_days=[]
     y_vars={};penalty_records=[];penalty_total=0.0;task_cost_bound={}
-    horizon_minutes=int(float(data.params.get('未修惩罚展望期（天）',14))*1440)
+    horizon_minutes=int(spec.horizon_days*1440)
     line_count=min(data.params['最多作业线数'],data.params['人员总上限'])
     line_intervals=defaultdict(list); turbine_intervals=defaultdict(list)
     tasks={t['任务编号']:t for t in data.tasks}
@@ -305,9 +384,6 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
     # 才不会拿「全周期实际成本」去对「14 天展望期模型成本」。产物层也读它。
     data.pricing_window=(anchor,window_end,truncated)
     data.penalty_records=[];data.penalty_total=0.0
-    # 加权模式的「实际生效权重」：调用方没传时 build_model 会取模板默认，
-    # 产物层要写进公式栏，不能只写「标准化加权目标」六个字。
-    data.effective_weights={}
     for task in data.tasks:
         tid=task['任务编号'];task_vars[tid]=[]
         part=data.parts[task['部件编号']]
@@ -423,7 +499,7 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
         level_y=sum(y for tid,y in y_vars.items() if tasks[tid]['严重等级']==level)
         metrics[level+'严重完工时间和']=(sum(c['完成']*x for c,x in choices if c['严重等级']==level)
                                           +window_end*level_y)
-    limits=limits or {}
+    limits=spec.limits
     allowed={'现金预算','最低完成数','必修任务','最大总成本'}
     if set(limits)-allowed: raise ValueError('未知业务约束，需扩展编译器')
     if '现金预算' in limits: m.Add(cash<=round(limits['现金预算']*MONEY))
@@ -432,79 +508,57 @@ def build_model(data, options, partial=False, strategy='成本最低优先', mod
     for tid in limits.get('必修任务',[]):
         if tid not in task_vars: raise ValueError('必修任务不存在于当前告警快照')
         m.Add(sum(x for c,x in task_vars[tid])==1)
-    # DSL 附加约束：调用方给的闭包，在 choices/metrics 构建后执行。
-    # 签名 (m, choices, task_vars, metrics) -> 错误列表；默认 None 时行为不变。
-    if extra_constraints is not None:
-        hook_errors = extra_constraints(m, choices, task_vars, metrics)
+    # DSL 附加约束：槽位翻译编好的闭包，在 choices/metrics 建好后执行。
+    # 签名 (m, choices, task_vars, metrics) -> 错误列表；None 时行为不变。
+    if spec.extra_constraints is not None:
+        hook_errors = spec.extra_constraints(m, choices, task_vars, metrics)
         if hook_errors:
             raise ValueError('；'.join(str(error) for error in hook_errors))
-    if custom_stages is not None:
-        # DSL 自定义目标：闭包返回分层阶段列表 [(名称, 方向, 表达式), ...]，绕过四模板。
-        stages = list(custom_stages(m, choices, metrics))
-    else:
-        registry=json.loads((Path(__file__).resolve().parents[1]/'references/四种目标模板.json').read_text(encoding='utf-8'))
-        template=next(t for t in registry['模板'] if t['模板编号']==strategy)
-        declared=[]
-        # 以前「部分排程」会把高/中/低完成数最大化三段硬压在成本前面，
-        # 等于换个方式逼着全修，成本与优先级再也换不掉。现在不修是合法分支、
-        # 惩罚 P 已经进目标，该倾向由 P 的大小自然产生，不再需要这三段前置目标。
-        # partial 参数保留只为兼容调用签名与产物标记，不改变模型结构。
-        if mode=='分层':
-            # 按模板声明的优先级逐条优化，一条不改、一条不删。
-            # 曾经的写法是 `if partial or not 指标.endswith('完成数')`——本意是躲开
-            # 上面那三段的重复，实际效果是：非部分排程时把"高严重完成数"这类
-            # 最核心的阶段整段删掉，高风险优先抢修退化成"高危早完工优先"，
-            # 而模板里明明写着先修高危。去重必须按指标名做，不能按名字后缀猜。
-            declared.extend((s['指标'],s['方向'],metrics[s['指标']]) for s in template['分层目标'])
-        elif mode=='加权':
-            weights=weights if weights is not None else template['加权默认值']
-            data.effective_weights=dict(weights)
-            if not weights or set(weights)-set(metrics) or any(not isinstance(v,(int,float)) or not math.isfinite(v) or v<0 for v in weights.values()) or not any(weights.values()):
-                raise ValueError('权重需非负有限、至少一项为正，并使用已登记指标')
-            terms=[]
-            # Bound-based normalization coefficients, rounded with explicitly recorded precision.
-            # 老分母把全部 1800 个候选项的停机损失都加了一遍，可每个任务只会选
-            # 一个候选——重复计数几十倍，把成本项系数压到个位数，P 再大也换不动
-            # 「完成任务数」。改成每个任务取其候选项中的最大单项成本，才是真实上界。
-            cost_bound=(abs(constant)+abs(round(data.penalty_total*MONEY))
-                        +sum(task_cost_bound.values())
-                        +data.end//1440*line_count*round(data.params['船租（元每艘每天）']*MONEY))
-            ranges={'总经济成本':max(1,cost_bound),
-                    '现金支出':max(1,data.end//1440*line_count*round(data.params['船租（元每艘每天）']*MONEY)+sum(data.parts[t['部件编号']]['维修包成本（元每套）']*MONEY for t in data.tasks)),
-                    '完成任务数':max(1,len(tasks)),'最后完工时间':time_ceiling,
-                    '完工时间和':max(1,len(tasks))*time_ceiling}
-            for level in ('高','中','低'):
-                ranges[level+'严重完成数']=max(1,sum(t['严重等级']==level for t in data.tasks))
-                ranges[level+'严重完工时间和']=ranges[level+'严重完成数']*time_ceiling
-            # 小一修三个新口径的归一化分母。不补这三个键，加权模式一旦带上
-            # 人工/备件/租船天权重就会 KeyError——ranges 必须和 metrics 同keyspace。
-            ranges['人工费']=ranges['现金支出']
-            ranges['备件费']=max(1,sum(data.parts[t['部件编号']]['维修包成本（元每套）']*MONEY
-                                       for t in data.tasks))
-            ranges['船舶艘天']=max(1,data.end//1440*line_count)
-            for name,w in weights.items():
-                coeff=round(1000000000000000*w/ranges[name])
-                if w and coeff==0: raise ValueError('权重经整数缩放后为零，请提高加权精度或调整权重')
-                terms.append((-1 if '完成数' in name or name=='完成任务数' else 1)*coeff*metrics[name])
-            declared.append(('标准化加权目标','minimize',sum(terms)))
-        else: raise ValueError('目标模式只能为分层或加权')
-        # 同一指标只优化一次：先出现的那条优先（partial 前置的三段排在模板之前）。
-        stages=[];seen=set()
-        for item in declared:
-            if item[0] in seen: continue
-            seen.add(item[0]);stages.append(item)
+    # 目标固定为一段标准化加权式：权重已在 RunSpec 定稿，这里只做整数缩放。
+    # 不再有分层阶段、自定义阶段钩子，也不往 data 上挂 effective_weights 打暗号。
+    weights=spec.weights
+    if set(weights)-set(metrics):
+        raise ValueError('权重需使用已登记指标')
+    terms=[]
+    # Bound-based normalization coefficients, rounded with explicitly recorded precision.
+    # 老分母把全部 1800 个候选项的停机损失都加了一遍，可每个任务只会选
+    # 一个候选——重复计数几十倍，把成本项系数压到个位数，P 再大也换不动
+    # 「完成任务数」。改成每个任务取其候选项中的最大单项成本，才是真实上界。
+    cost_bound=(abs(constant)+abs(round(data.penalty_total*MONEY))
+                +sum(task_cost_bound.values())
+                +data.end//1440*line_count*round(data.params['船租（元每艘每天）']*MONEY))
+    ranges={'总经济成本':max(1,cost_bound),
+            '现金支出':max(1,data.end//1440*line_count*round(data.params['船租（元每艘每天）']*MONEY)+sum(data.parts[t['部件编号']]['维修包成本（元每套）']*MONEY for t in data.tasks)),
+            '完成任务数':max(1,len(tasks)),'最后完工时间':time_ceiling,
+            '完工时间和':max(1,len(tasks))*time_ceiling}
+    for level in ('高','中','低'):
+        ranges[level+'严重完成数']=max(1,sum(t['严重等级']==level for t in data.tasks))
+        ranges[level+'严重完工时间和']=ranges[level+'严重完成数']*time_ceiling
+    # 小一修三个新口径的归一化分母。不补这三个键，加权目标一旦带上
+    # 人工/备件/租船天权重就会 KeyError——ranges 必须和 metrics 同keyspace。
+    ranges['人工费']=ranges['现金支出']
+    ranges['备件费']=max(1,sum(data.parts[t['部件编号']]['维修包成本（元每套）']*MONEY
+                               for t in data.tasks))
+    ranges['船舶艘天']=max(1,data.end//1440*line_count)
+    for name,w in weights.items():
+        coeff=round(1000000000000000*w/ranges[name])
+        if w and coeff==0: raise ValueError('权重经整数缩放后为零，请提高加权精度或调整权重')
+        terms.append((-1 if '完成数' in name or name=='完成任务数' else 1)*coeff*metrics[name])
+    stages=[('标准化加权目标','minimize',sum(terms))]
     return m,choices,stages,cost
 
 
-def solve(data, options, output, seconds=None, strategy='成本最低优先', mode='加权', weights=None, limits=None, partial=False, hint=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, custom_stages=None, gap_limit=None):
-    # 时限与容差只有一个来源，见 solve_budget：参数总表 → 调用方显式 → 环境上限。
-    # 以前这里还藏着一次 min(seconds, MWA_SOLVE_SECONDS)，公告却按 300 秒说，
-    # 于是在界面上同时存在 300 / 60 / 30 三个数。
-    budget = resolve_budget(data.params, requested_seconds=seconds, requested_gap=gap_limit)
-    seconds = budget['seconds']; gap_limit = budget['gapLimit']
-    model,choices,stages,cost=build_model(data,options,partial,strategy,mode,weights,limits,extra_constraints,custom_stages)
-    if hint:
-        keys={(c['任务编号'],c['开始'],c['作业线']) for c in hint}
+def solve(data, options, output, seconds=None, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None, limits=None, partial=False, hint=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, gap_limit=None, spec=None):
+    """求解入口。对外保留老签名（yxcore 直接调它），进来第一件事就是定稿。"""
+    spec = spec or RunSpec.resolve(
+        data, strategy=strategy, mode=mode, weights=weights, seconds=seconds,
+        gap_limit=gap_limit, limits=limits, partial=partial,
+        extra_constraints=extra_constraints, hint=hint, on_solver=on_solver,
+        cancelled=cancelled, model_fingerprint=model_fingerprint)
+    seconds = spec.seconds; gap_limit = spec.gap_limit; budget = spec.budget
+    model,choices,stages,cost=build_model(data,options,spec)
+    if spec.hint:
+        keys={(c['任务编号'],c['开始'],c['作业线']) for c in spec.hint}
         for c,x in choices: model.AddHint(x,int((c['任务编号'],c['开始'],c['作业线']) in keys))
     error=model.Validate()
     if error: raise ValueError('模型校验失败：'+error)
@@ -517,7 +571,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
             prototype_bytes = serializer()
     else:
         prototype_bytes = str(prototype).encode('utf-8')
-    artifact_fingerprint = model_fingerprint or hashlib.sha256(prototype_bytes).hexdigest()
+    artifact_fingerprint = spec.model_fingerprint or hashlib.sha256(prototype_bytes).hexdigest()
     solver_parameters = {'num_search_workers':WORKERS,'random_seed':17,
                          'max_time_in_seconds':seconds,'relative_gap_limit':gap_limit,
                          'gap_scope':'仅成本阶段，其余阶段要求证明最优'}
@@ -527,17 +581,13 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         model=model,
         choices=choices,
         stages=stages,
-        strategy=strategy,
-        mode=mode,
-        weights=weights,
-        limits=limits,
-        partial=partial,
+        spec=spec,
         solver_parameters=solver_parameters,
         model_fingerprint=artifact_fingerprint,
     )
     artifact = write_model_artifact(artifact, output, model)
     solver=cp_model.CpSolver();solver.parameters.num_search_workers=WORKERS;solver.parameters.random_seed=17
-    if on_solver: on_solver(solver)
+    if spec.on_solver: spec.on_solver(solver)
     # 上一版排程只做搜索起点（build_model 之后已用 AddHint 喂过），不做结果。
     #
     # 这里曾经写成 selected=fallback：约束把模型逼到不可行时，旧方案会被原样
@@ -546,10 +596,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     # 用户看到 11/13 却以为约束生效了。兜底改到 recommend 末尾，且必须标注。
     started=time.monotonic();logs=[];selected=None
     last_cost=None
-    termination_reason='COMPLETED';business_complete=False;tie_complete=False;last_status=None
-    # 决胜段是分层模式「逐条目复现」的配套。加权模式不跑，也不能因为没挑代表
-    # 就把已经证到最优的加权目标连坐降成 FEASIBLE。
-    tie_applicable = mode == '分层'
+    termination_reason='COMPLETED';business_complete=False;last_status=None
 
     def _rehint():
         """把当前解交给下一阶段当起点。
@@ -575,7 +622,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     executed=0;degraded=[];tolerant=[];max_gap=0.0
     total_stages=len(stages)
     for index,(name,sense,expression) in enumerate(stages):
-        if cancelled and cancelled():
+        if spec.cancelled and spec.cancelled():
             termination_reason='USER_CANCELLED';break
         skip=None
         if name in done_metrics:
@@ -605,7 +652,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         solver.parameters.relative_gap_limit=gap_limit if name=='总经济成本' else 0.0
         if sense=='maximize': model.Maximize(expression)
         else: model.Minimize(expression)
-        stage_model_name = ('diagnostic' if partial else 'solver') + f'_model_stage_{len(logs)+1}.pbtxt'
+        stage_model_name = ('diagnostic' if spec.partial else 'solver') + f'_model_stage_{len(logs)+1}.pbtxt'
         export_model_file(model, output/stage_model_name)
         status=solver.Solve(model);last_status=status
         log={'目标':name,'方向':sense,'状态':solver.StatusName(status),'耗时秒':solver.WallTime(),
@@ -633,60 +680,17 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         model.Add(expression==round(val))
         _rehint()
     planned=len(stages)-skipped
-    # 分层"跑完"分两档：严格全部证明最优，和成本阶段在容差内收敛。
+    # 只有一个业务阶段：证到最优就是证到最优。以前还挂着「确定性决胜」几十段，
+    # 某一段没证完就把已经 OPTIMAL 的目标连坐降成 FEASIBLE，那段已整块删除。
     business_complete=(len(business_logs)==planned
                        and all(r['状态']=='OPTIMAL' or r.get('最优性')=='容差内最优' for r in business_logs))
     strictly_optimal=(len(business_logs)==planned and all(r['状态']=='OPTIMAL' for r in business_logs))
-    if business_complete and tie_applicable:
-        ordered=sorted(choices,key=lambda item:(item[0]['任务编号'],item[0]['开始'],item[0]['作业线']))
-        chunks=[ordered[index:index+60] for index in range(0,len(ordered),60)]
-        for index,chunk in enumerate(chunks,1):
-            if cancelled and cancelled():
-                termination_reason='USER_CANCELLED';break
-            remaining=seconds-(time.monotonic()-started)
-            if remaining<=0:
-                termination_reason='TIME_LIMIT';break
-            expression=sum((1 << offset)*variable for offset,(_,variable) in enumerate(reversed(chunk)))
-            model.Minimize(expression)
-            tie_limit=max(0.5,min(remaining,remaining/max(1,len(chunks)-index+1)))
-            solver.parameters.max_time_in_seconds=tie_limit
-            solver.parameters.relative_gap_limit=0.0
-            status=solver.Solve(model);last_status=status
-            stage_model_name = ('diagnostic' if partial else 'solver') + f'_model_tie_{index}.pbtxt'
-            export_model_file(model, output/stage_model_name)
-            log={'目标':f'确定性决胜{index}','方向':'minimize','状态':solver.StatusName(status),'耗时秒':solver.WallTime(),
-                 '分配秒':round(tie_limit,2),'模型文件':stage_model_name}
-            logs.append(log)
-            # 决胜段没证到最优 ≠ 整场时间用尽。决胜段是按"剩余段数均分"给时限的，
-            # 某一段跑满自己那 7 秒很常见，整场 180 秒才用 14 秒时说"时限用尽"
-            # 就是假的。所以只看整场还剩多少，不看这一段分到的小份。
-            overall_left=seconds-(time.monotonic()-started)
-            tie_exhausted=overall_left<=max(1.0,seconds*0.02)
-            if status not in (cp_model.OPTIMAL,cp_model.FEASIBLE):
-                if status==cp_model.UNKNOWN:
-                    termination_reason='TIME_LIMIT' if tie_exhausted else 'TIE_NOT_PROVEN'
-                break
-            selected=[c for c,x in choices if solver.Value(x)]
-            last_cost=solver.Value(cost)/MONEY
-            value=round(solver.ObjectiveValue());bound=solver.BestObjectiveBound()
-            log.update({'目标值':value,'界':bound,
-                        '相对差距':0.0 if status==cp_model.OPTIMAL else round(abs(value-bound)/max(1,abs(value)),6)})
-            if status!=cp_model.OPTIMAL:
-                termination_reason='TIME_LIMIT' if tie_exhausted else 'TIE_NOT_PROVEN'
-                break
-            model.Add(expression==value)
-            _rehint()
-        else:
-            tie_complete=True
-    if cancelled and cancelled(): termination_reason='USER_CANCELLED'
+    if spec.cancelled and spec.cancelled(): termination_reason='USER_CANCELLED'
     # 有阶段在分到的时限里没证明最优：不是整场超时，也不能叫 COMPLETED。
     # 单独给一个原因，版本对比和模型问答读到它就知道该说"未证明"。
     if termination_reason=='COMPLETED' and degraded:
         termination_reason='STAGE_TIME_LIMIT'
-    # 「全部证完」的口径按模式分开：加权只看业务目标，分层还要决胜段也全证完。
-    # 以前统一要求 tie_complete，加权模式即使主目标 OPTIMAL 也因为没挑代表
-    # 被降成 FEASIBLE / 未证明最优，用户读到的「未证明」其实是「没证明编号最小」。
-    fully_proven = strictly_optimal and (tie_complete or not tie_applicable) and termination_reason=='COMPLETED'
+    fully_proven = strictly_optimal and termination_reason=='COMPLETED'
     if selected is None:
         solve_status='INFEASIBLE' if last_status==cp_model.INFEASIBLE else 'UNKNOWN'
     else:
@@ -702,7 +706,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     return selected, {'求解器':'OR-Tools CP-SAT','模型形式':'有界整数线性目标及可线性化调度约束',
         '求解器参数':solver_parameters,
         '有解':selected is not None,'解状态':solve_status,'终止原因':termination_reason,
-        '目标模式':mode,'最优性':quality,
+        '目标模式':spec.facts()['目标模式'],'权重':spec.weights,'最优性':quality,
         # 预算与容差：公告、参数总表、版本对比都读这一份，不再各算各的。
         '预算':{'seconds':seconds,'gapLimit':gap_limit,
                 'secondsSource':budget['secondsSource'],'gapSource':budget['gapSource'],
@@ -715,16 +719,22 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         # 不再用旧方案的来源字段去冒充。
         '方案来源':'CP_SAT' if selected is not None else None,
         '分层全部最优':fully_proven,
-        # 三态：True/False 只属于分层；加权不跑决胜段，记「不适用」而不是 False，
-        # 免得 pipeline / 求解说明把「不适用」当成「没证完」再报一次假告警。
-        '确定性决胜完成':tie_complete if tie_applicable else '不适用',
+        # 下面三个是历史字段名，读侧（求解说明 / 版本对比 / 前端）还在用，先保留。
+        # 决胜段已整块删除，恒记「不适用」而不是 False，免得被当成「没证完」误报。
+        '确定性决胜完成':'不适用',
         '阶段计划':plan,'跳过阶段数':skipped,
-        '阶段':logs,'总耗时秒':time.monotonic()-started,'模型成本':last_cost,'诊断模型':partial,
+        '阶段':logs,'总耗时秒':time.monotonic()-started,'模型成本':last_cost,'诊断模型':spec.partial,
         '模型产物文件':artifact['artifactFile'],'模型产物指纹':artifact_fingerprint}
 
 
-def recommend(data, output, seconds=None, strategy='成本最低优先', mode='加权', weights=None, limits=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, custom_stages=None, partial=False, dsl=None, gap_limit=None):
-    if strategy not in STRATEGIES: raise ValueError('未知策略')
+def recommend(data, output, seconds=None, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None, limits=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, partial=False, dsl=None, gap_limit=None):
+    # 与 solve() 共用同一个定稿点：CLI / 服务 / 测试走这里，Agent 走 solve()，
+    # 两条路的产物字段必须来自同一份 spec，不许再各写一份。
+    spec=RunSpec.resolve(
+        data, strategy=strategy, mode=mode, weights=weights, seconds=seconds,
+        gap_limit=gap_limit, limits=limits, partial=partial,
+        extra_constraints=extra_constraints, on_solver=on_solver, cancelled=cancelled,
+        model_fingerprint=model_fingerprint)
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     if (output/'结果.json').exists(): raise ValueError('输出目录已有结果，请使用新目录保留历史版本')
     # 已批准检修单锁定的任务：从候选池里精确取出那一行当固定项，
@@ -747,16 +757,16 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode='�
     options={t['任务编号']:candidates(data,t) for t in data.tasks}
     baselines={name:heuristic(data,options,name) for name in ('严重性优先','低风速优先')}
     if not data.tasks:
-        budget=resolve_budget(getattr(data,'params',None),requested_seconds=seconds,requested_gap=gap_limit)
+        budget=spec.budget
         chosen=[];info={'有解':True,'状态':'无待修告警','解状态':'OPTIMAL','终止原因':'COMPLETED','阶段':[],
-                        '最优性':'已证明最优',
+                        '最优性':'已证明最优','目标模式':spec.facts()['目标模式'],'权重':spec.weights,
                         '预算':{'seconds':budget['seconds'],'gapLimit':budget['gapLimit'],
                                 'secondsSource':budget['secondsSource'],'gapSource':budget['gapSource'],
                                 'tableSeconds':budget['tableSeconds'],'envCap':budget['envCap'],
                                 'requestedSeconds':budget['requestedSeconds']},
                         '分层进度':'0/0','计划阶段数':0,'执行阶段数':0,'容差内阶段':[],'未达最优阶段':[],
                         '诊断模型':False,'模型成本':0,'分层全部最优':True,
-                        '确定性决胜完成':True if mode=='分层' else '不适用',
+                        '确定性决胜完成':'不适用',
                         '求解器参数':{'num_search_workers':WORKERS,'random_seed':17,
                                       'max_time_in_seconds':budget['seconds'],
                                       'relative_gap_limit':budget['gapLimit'],
@@ -764,11 +774,9 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode='�
     else:
         best=max(baselines.values(),key=len)
         def _run(allow_partial):
-            return solve(data,options,output,seconds,strategy,mode,weights,limits,
-                         partial=allow_partial,hint=best,on_solver=on_solver,cancelled=cancelled,
-                         model_fingerprint=model_fingerprint,extra_constraints=extra_constraints,
-                         custom_stages=custom_stages,gap_limit=gap_limit)
-        if partial:
+            # 完整 / 部分两轮只换这一个标记，其它配置仍旧是同一份定稿。
+            return solve(data,options,output,spec=replace(spec,partial=allow_partial,hint=best))
+        if spec.partial:
             # 调用方已判定"允许少修"（DSL 里出现 exclude 这类选择类约束）。
             # 完整模式把每个任务都强制排入，跟"排除某几个"直接矛盾，跑也白跑。
             chosen,info=_run(True)
@@ -798,8 +806,10 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode='�
                 '完整排程与部分排程都没有在时限内找到可行解，'
                 '下面是未考虑本次约束的启发式基线；不代表无解。'
             )
-    report={'版本':'3.0','数据':data.meta,'策略':strategy,'目标模式':mode,'自定义权重':weights,
-            '约束覆盖':limits or {},'求解':info,'窗口':[{**w,'开始日期':data.stamp(w['开始']),
+    report={'版本':'3.0','数据':data.meta,'策略':spec.strategy,
+            '目标模式':spec.facts()['目标模式'],'自定义权重':spec.weights,
+            '运行配置':spec.facts(),
+            '约束覆盖':spec.limits,'求解':info,'窗口':[{**w,'开始日期':data.stamp(w['开始']),
             '结束时间不含':data.stamp(w['结束'])} for w in data.windows], '人工基准':{}}
     if chosen is not None:
         report['推荐']=account(data,chosen)
@@ -824,7 +834,8 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode='�
         report['求解']['意图对账']=reconcile(
             dsl,report,data=data,
             overrides=(data.meta or {}).get('参数覆盖') or {},
-            context={'策略':strategy,'目标模式':mode,'自定义权重':weights},
+            context={'策略':spec.strategy,'目标模式':spec.facts()['目标模式'],
+                     '自定义权重':spec.weights},
         )
     from product_report import write_report
     write_report(data,report,output)

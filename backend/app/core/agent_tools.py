@@ -292,14 +292,19 @@ class AgentToolbox:
                                 ],
                             },
                             "description": (
-                                "附加内容。model 只支持单个方案，多方案时会被拒绝并提示；"
-                                "只要目标函数时可配 section=objective。"
+                                "附加内容。model 只支持单个方案，多方案时会被拒绝并提示。"
+                                "问目标函数 / 加权公式 / 权重 / 系数 → include=[\"model\"] "
+                                "并配 section=objective；问钱花在哪（船租、人工、备件、"
+                                "发电损失）→ include=[\"costs\"]。两者不是一回事，别混。"
                             ),
                         },
                         "section": {
                             "type": "string",
                             "enum": ["all", "objective", "constraints", "variables", "costs"],
-                            "description": "include=model 时只返回目标函数、约束、变量或成本构成。",
+                            "description": (
+                                "include=model 时只返回目标函数(objective)、约束(constraints)、"
+                                "变量(variables)。成本构成请用 include=[\"costs\"]，不要用 section=costs。"
+                            ),
                         },
                         "focus": {
                             "type": "string",
@@ -2299,7 +2304,7 @@ class AgentToolbox:
         version: WindowVersion,
         artifact: dict[str, Any],
     ) -> dict[str, str]:
-        mode = str(artifact.get("mode") or "分层")
+        mode = str(artifact.get("mode") or "加权")
         stages = _list(_dict(artifact.get("objectives")).get("stages"))
         symbols = self._stage_symbols(artifact)
         terms = {
@@ -2349,17 +2354,10 @@ class AgentToolbox:
             )
             objective_lines.append(rf"\min\;&{weighted}")
         else:
-            ordered = []
-            for name, symbol in symbols:
-                stage = next(
-                    (item for item in stages if item.get("name") == name),
-                    {},
-                )
-                sign = "-" if stage.get("sense") == "maximize" else ""
-                ordered.append(f"{sign}{symbol}")
-            objective_lines.append(
-                r"\operatorname{lexmin}\;&\left(" + ",".join(ordered) + r"\right)"
-            )
+            # 旧归档产物可能标着已撤销的分层模式。不假装还能重建字典序目标，
+            # 也不为了兼容旧数据把 lexmin 渲染器留在主链里。
+            objective_lines.append(r"\text{旧归档方案使用已撤销的分层目标，公式不再重建}")
+            symbols = []
         for name, symbol in symbols:
             expression = terms.get(symbol)
             if expression:
@@ -2398,7 +2396,7 @@ class AgentToolbox:
     ) -> str:
         summary = version.resultSummary or {}
         dimensions = _dict(artifact.get("dimensions"))
-        mode = str(artifact.get("mode") or "分层")
+        mode = str(artifact.get("mode") or "加权")
         latex = self._render_math_latex(version, artifact)
         status = _status(version)
         proof = "已证明最优" if status == "OPTIMAL" else "尚未证明最优"

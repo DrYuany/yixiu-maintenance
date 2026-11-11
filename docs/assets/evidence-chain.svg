@@ -50,5 +50,5 @@
   <text x="994" y="153" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="17" font-weight="600" fill="#16232e">37 个文件</text>
   <text x="994" y="180" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="11" fill="#6b7c8c">指纹 0596… · pbtxt 可重跑</text>
 
-  <text x="40" y="240" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="12" fill="#7a8b9a">同一份契约 + 同一时限 = 同一结论（分层 25 段决胜保证）；赢不了就写「不宣称同等服务节省」。</text>
+  <text x="40" y="240" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif" font-size="12" fill="#7a8b9a">同一份输入契约 = 同一个模型指纹；配置在 RunSpec 一次定稿，所有产物字段从同一份映射取值。</text>
 </svg>

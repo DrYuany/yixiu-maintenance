@@ -260,14 +260,17 @@ def test_回显把硬约束和加权偏好分开说(snapshot):
 # ── 6. 模型里的证据：约束真的写进 CP-SAT，成本目标拿不走 ────────────────
 
 def test_硬约束真的进了CP_SAT模型(snapshot):
-    from product_planner import build_model
+    from product_planner import RunSpec, build_model
 
     data, options = snapshot
     n = A.group_size(SPEC, data, options)
     patch = A.hard_patch(SPEC, n, "高危必须全修")
-    plain, _, _, _ = build_model(data, options, partial=True)
+    # 一次求解的配置必须先在 RunSpec 定稿；两次只换 DSL 闭包，其余保持同一份。
+    spec = RunSpec.resolve(data, partial=True)
+    plain, _, _, _ = build_model(data, options, spec)
     with_hard, _, _, _ = build_model(
-        data, options, partial=True, extra_constraints=build_closure([patch], data))
+        data, options, RunSpec.resolve(
+            data, partial=True, extra_constraints=build_closure([patch], data)))
     plain_constraints = list(plain.Proto().constraints)
     hard_constraints = list(with_hard.Proto().constraints)
     assert len(hard_constraints) == len(plain_constraints) + 1
