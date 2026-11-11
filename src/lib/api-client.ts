@@ -118,7 +118,6 @@ export const apiClient = {
     message: string,
     selectedVersionId?: string | null,
     selectedWindowId?: string | null,
-    engine: "llm" | "rule" = "llm",
   ) =>
     request<AgentResponse>("/api/agent/message", {
       method: "POST",
@@ -127,7 +126,6 @@ export const apiClient = {
         message,
         selectedVersionId: selectedVersionId ?? null,
         selectedWindowId: selectedWindowId ?? null,
-        engine,
       }),
     }),
   sendMessageStream: async (
@@ -136,7 +134,6 @@ export const apiClient = {
     selectedVersionId: string | null | undefined,
     selectedWindowId: string | null | undefined,
     handlers: StreamHandlers,
-    engine: "llm" | "rule" = "llm",
   ): Promise<AgentResponse> => {
     const response = await fetch(`${API_BASE_URL}/api/agent/message/stream`, {
       method: "POST",
@@ -146,7 +143,6 @@ export const apiClient = {
         message,
         selectedVersionId: selectedVersionId ?? null,
         selectedWindowId: selectedWindowId ?? null,
-        engine,
       }),
     });
     if (!response.ok) {

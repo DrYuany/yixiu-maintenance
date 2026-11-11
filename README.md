@@ -78,18 +78,18 @@ flowchart LR
 名字容易撞：**前端是 React（框架），后端 agent 不是 ReAct（Reasoning + Acting 范式）。**
 
 - **前端**：React 18 + Vite，在 `src/`。
-- **后端 agent**：原生 tool-calling loop。`conversation_agent.py:155` 那个
-  `for round_index in range(self.max_rounds)`（最多 4 轮），模型直接吐出结构化的
+- **后端 agent**：原生 tool-calling loop。`conversation_agent.py:127` 那个
+  `for _ in range(self.max_rounds)`（最多 4 轮），模型直接吐出结构化的
   `tool_use` 块，系统执行后把 `tool_result` 回灌。行动是**字段**，不是从自然语言的
   思考里解析出来的——这一层直接取代了 ReAct 的 `Thought / Action / Observation`
   格式约定，所以代码里搜不到任何 `Thought:` 字样。
 - **刻意不要那个 Thought**：ReAct 的 Thought 是模型自述的推理文本。一旦拿它当依据，
   就和状态诚实性冲突——模型说"我查过库存"，不等于库存真够。这套里推理轨迹不落盘、
   不参与判定，判定只认确定性产物（校验结果、求解状态、重算差值）。
-- **主链路根本不进循环**：一句话 → 路由（`dsl` / `not_change` / `reject` / `clarify`）
-  → 编译成 DSL → 确定性校验器 → CP-SAT。这是**单次编译**，不是模型自己迭代到满意。
-  回滚用的规则路径（`AGENT_ENGINE=rule`）是 `is_*` / `detect_*` 的确定性意图瀑布，
-  同样不是 ReAct。
+- **主链路就是这条工具循环**：一句话 → 模型自主选工具（读事实 / `solve` 出预览 /
+  `submit_change` 提交）→ 系统执行 → 结果回灌 → 受控旋钮编译 → CP-SAT。
+  求解是**单次编译**，不是模型自己迭代到满意；确认是工具调用，不是关键词短路。
+  词表路由、规则兜底答案和 `AGENT_ENGINE=rule` 回滚开关都已撤销。
 
 一句话：**外壳是 tool-calling loop，内核是受控编译。** 工具循环、会话记忆、多方案对比、
 审批是壳；「用户意图 → 受控 DSL → 固定模型契约」才是内核。
@@ -112,7 +112,7 @@ flowchart LR
 # 1. 后端依赖
 python -m pip install -r backend/requirements.txt
 
-# 2. 对话模型（可选：不配则回退确定性规则解析，功能完整但不理解自由表述）
+# 2. 对话模型（必配：没 key 时接口如实报错，不会换一套规则答案冒充）
 cp backend/.env.example .env.local     # 填 MINIMAX_API_KEY（Windows: copy backend\.env.example .env.local）
 
 # 3. 起后端（端口 8010，前端 dev server 会代理到这里）
@@ -126,7 +126,7 @@ npm ci && npm run dev                   # http://localhost:3000
 > （`MINIMAX_BASE_URL=https://api.deepseek.com/anthropic`）。这是早期接入留下的名字，
 > 换模型只改 base_url 和 model，不动代码。
 
-不想配模型也能跑：三层解析里前两层（规则直出、向量检索）完全确定性，不联网。
+不配 key 服务照样能启动，但对话接口会明确回「这一轮没能调用大模型」——状态诚实性优先于凑一个答案。
 
 ## 一次求解到底留下什么
 
@@ -216,8 +216,8 @@ CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 - **单机形态。** SQLite + 本地令牌认证，适合验收和单机试点；多租户、权限体系、
   监控告警、备份恢复都没做。
 - **完工反馈是整单级的。** 逐任务的实际工时与偏差回写还没做，闭环只闭到"整张检修单"。
-- **对模型能力有依赖。** 自由表述的理解依赖对话模型；不配模型时只有规则层，
-  能覆盖常见说法，覆盖不到的会明确说"没听懂"，而不是瞎猜。
+- **对模型能力有依赖。** 自由表述的理解依赖对话模型；没配 key 或调用失败时，
+  接口如实说没答上来，不会伪造一份规则生成的答案。
 
 所以现在不能宣称"除数据外已与生产系统一样"。完整边界见
 [`PRODUCT_READINESS.md`](PRODUCT_READINESS.md)。

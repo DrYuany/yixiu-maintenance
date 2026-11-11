@@ -30,10 +30,12 @@ PINNED_AS_OF = "2026-10-23T18:00:00+08:00"
 @pytest.fixture(autouse=True)
 def clear_env() -> None:
     os.environ.pop("MWA_DB_PATH", None)
-    os.environ["SKIP_LOCAL_ENV"] = "1"
+    os.environ.pop("SKIP_LOCAL_ENV", None)
     os.environ["PLANNING_AS_OF"] = PINNED_AS_OF
-    os.environ.pop("MINIMAX_API_KEY", None)
-    os.environ.pop("MINIMAX_MODEL", None)
-    os.environ.pop("MINIMAX_BASE_URL", None)
+    # 行为评测走真实模型，不注入假模型：与线上共用仓库根 .env.local 那把
+    # DeepSeek key。没有 key 时在线层由各自用例运行时 skip，不假装跑过。
+    from app.main import load_local_env
+
+    load_local_env()
     # 演示口令会让所有接口多一道拦截，测试里必须关掉，否则全部 403。
     os.environ.pop("DEMO_ACCESS_CODE", None)

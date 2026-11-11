@@ -113,65 +113,76 @@ def run(
         # 注入口闭包里的错误（该时段没候选、租船天没法按组算…）是内核拼成 ValueError 抛的。
         # 不接住就会变成一串 traceback——离用户那句话隔着三层，谁也看不懂。
         raise YxError([str(exc)], warnings, code="编译") from exc
-    recommended = None
     if selected is None:
         # 没解出来不能把基线的旧方案交出去（大一修踩过：旧方案被当成"有解"返回，
         # 解状态还写 FEASIBLE，用户以为约束生效了）。这里直接拦，由诊断层说原因。
         from .diagnose import explain_infeasible
 
-        info["策略"] = strategy
-        # solve() 已在 RunSpec 里定稿权重；这里只补一个可能为空的回显，不许覆盖。
-        info.setdefault("权重", request.weights)
         # _diagnose=False 是归因探针在调用，别再递归展开一次诊断
         reason = (explain_infeasible(patches, data, options, info, request, seconds=seconds)
                   if _diagnose else "这一条单独就排不出方案")
         proven = "INFEASIBLE" in str(info.get("解状态") or "")
         raise YxError([reason], warnings, code="不可行" if proven else "未证不可行")
+
+    accepted = _accept(
+        data=data, selected=selected, info=info, patches=patches,
+        request=request, base_data=base_data, output=output,
+        warnings=warnings, modules=modules,
+    )
+    return {
+        "排程": selected,
+        "求解": info,
+        "回显": request.echo,
+        "待确认": request.uncertain,
+        "指纹": fp,
+        "数据": data.meta,
+        "请求": request,
+        **accepted,
+    }
+
+
+def _accept(*, data, selected, info, patches, request, base_data, output,
+            warnings, modules) -> dict[str, Any]:
+    """验收关卡：一次判完，不过就整体不出方案。
+
+    独立复核（另一套算法重算成本）、意图对账、诚实性告警、产物回读都在这里。
+    以前它们各带一个 try/if 散在编排中间，谁出事谁在旁边补一句；漏一条就会
+    带着「复核通过」把没验过的方案交出去。
+    """
     try:
         recommended = modules["account"](data, selected)
     except ValueError as exc:
-        # 独立复核没过：这份排程自己站不住，不能带着"复核通过"交出去
         raise YxError([f"求解结果未通过独立复核：{exc}"], warnings, code="复核") from exc
 
-    # 少修了几个任务，必须原原本本说出来。以前只在 request.partial（用户显式
-    # 限制过范围/数量）时提醒；现在「本轮不修」是模型的合法分支，默认也会少修，
-    # 再按规格层开关判断就会漏报——用户看到「排程成功」会以为全修了。
+    audit = reconcile(patches, Ctx(selected=selected, rec=recommended, data=data,
+                                   base_data=base_data, info=info, request=request))
+    audit_text = describe_audit(audit)
+    # 违例是"对不上"，未核对是"没法证明对得上"——两者都不能出方案。
+    if audit["违例"] or audit["未核对"]:
+        raise YxError(["意图对账未通过：" + audit_text], warnings, code="对账")
+
     total, done = len(data.tasks), len(selected)
     explicit = any(p.slot == "allow_partial" and p.op != "reset" for p in patches)
     if done < total and not explicit:
+        # 「本轮不修」是模型的合法分支，默认也会少修；按规格层开关判断会漏报。
         reason = ("因为你限制了范围或数量" if request.partial
                   else "本轮按不修惩罚与维修成本权衡，未排任务留在台账里待后续窗口")
         warnings = list(warnings) + [
             f"这次是部分排程：{total} 个任务里排了 {done} 个，"
             f"其余 {total - done} 个这轮不修（{reason}）"
         ]
-    # 策略与权重都已在 RunSpec 定稿并写进 info，这里只补缺、不许覆盖：
-    # 以前 info["权重"] = request.weights 会把定稿值改回 None，正是「同一个
-    # 事实各写一份」的最后一处漏点。
-    info.setdefault("策略", strategy)
-    info.setdefault("权重", request.weights)
-    audit = reconcile(patches, Ctx(selected=selected, rec=recommended, data=data,
-                                   base_data=base_data, info=info, request=request))
-    # 违例是"对不上"，未核对是"没法证明对得上"——两者都不能出方案。
-    # 收紧的代价是任何一条没实现对账的旋钮都会在这里被拦下，而不是悄悄放过去。
-    if audit["违例"] or audit["未核对"]:
-        raise YxError(["意图对账未通过：" + describe_audit(audit)], warnings, code="对账")
-    audit_text = describe_audit(audit)
-    # 状态诚实性：业务阶段没证到最优就要说出来，并写进产物。
-    # 确定性决胜段已整块撤销，不再有「主目标证优、但没证明挑的是编号最小那张」
-    # 这种把 OPTIMAL 连坐降级的假告警。
     unproven = list(info.get("未达最优阶段") or [])
     if unproven:
         warnings = list(warnings) + [
             f"这些目标没证到最优（{'、'.join(unproven)}）：方案在时限内波动，"
             "同一批旋钮换台机器排出来的内容可能不同"
         ]
+
     # 模型产物：求解器真实写下的变量/约束/参数清单（model_artifact.json）。
-    # 不带它，用户问「你的数学模型」时工具层只能诚实说没保存——问句合法，
-    # 答案不该缺。读失败不拦方案：数学模型页缺这一版只能说没存上，不该炸排程。
+    # 读失败不拦方案：数学模型页缺这一版只能说没存上，不该炸排程。
     artifact: dict[str, Any] | None = None
-    for artifact_name in ("model_artifact.json", "diagnostic_model_artifact.json"):
-        artifact_file = output / artifact_name
+    for name in ("model_artifact.json", "diagnostic_model_artifact.json"):
+        artifact_file = output / name
         if artifact_file.exists():
             try:
                 artifact = json.loads(artifact_file.read_text(encoding="utf-8"))
@@ -179,22 +190,15 @@ def run(
                 artifact = None
             break
     return {
-        "排程": selected,
         "推荐": recommended,
-        "求解": info,
-        "回显": request.echo,
-        "待确认": request.uncertain,
         "对账": audit_text,
-        "指纹": fp,
-        "数据": data.meta,
         "警告": warnings,
+        "模型产物": artifact,
         # 实际有没有少修，看产物；规格层有没有开「允许少修」另存一格，别混。
         "部分排程": done < total,
         "规格层允许少修": request.partial,
         "已证最优": not unproven,
         "未证最优目标": unproven,
-        "请求": request,
-        "模型产物": artifact,
     }
 
 

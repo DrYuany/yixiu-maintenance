@@ -210,6 +210,7 @@ class AgentToolbox:
         on_submit_change: Callable[[str, dict[str, Any], str], dict[str, Any]] | None = None,
         yx_engine: Any | None = None,
         user_message: str | None = None,
+        pending_change: dict[str, Any] | None = None,
     ) -> None:
         self.conversation_id = conversation_id
         self.versions = versions
@@ -229,7 +230,10 @@ class AgentToolbox:
         self.on_submit_change = on_submit_change
         # 槽位引擎：solve 工具靠它把「改排程」翻译成槽位补丁（小一修的理解层）。
         self.yx_engine = yx_engine
-        self.pending_change: dict[str, Any] | None = None
+        # 待确认变更只存在会话的 working memory 里，这里载入的是它的**本轮快照**：
+        # 上一轮 solve 出的预览要能被下一轮的 submit_change 读到。本轮 solve
+        # 产出新预览时覆盖它，并通过 on_pending_change 回写持久化状态。
+        self.pending_change: dict[str, Any] | None = pending_change
         # 这一轮到底动过待确认没有：动过但最后没剩下，说明要清掉上一轮遗留的那份。
         self.pending_touched = False
         self.ordered = chronological_versions(
@@ -300,10 +304,11 @@ class AgentToolbox:
                         },
                         "section": {
                             "type": "string",
-                            "enum": ["all", "objective", "constraints", "variables", "costs"],
+                            "enum": ["all", "objective", "constraints", "variables"],
                             "description": (
                                 "include=model 时只返回目标函数(objective)、约束(constraints)、"
-                                "变量(variables)。成本构成请用 include=[\"costs\"]，不要用 section=costs。"
+                                "变量(variables)。成本构成是另一种内容，走 include=[\"costs\"]，"
+                                "不是 section 的一个取值。"
                             ),
                         },
                         "focus": {
@@ -1122,8 +1127,7 @@ class AgentToolbox:
         if "status" in include:
             data["solve"] = self._solve_facts(version)
 
-        want_costs = "costs" in include or (section == "costs" and "model" in include)
-        if want_costs:
+        if "costs" in include:
             costs = self._get_model({"version": version.id, "view": "costs"})
             if costs["status"] == "ok":
                 data["costs"] = costs["data"]
@@ -1132,7 +1136,7 @@ class AgentToolbox:
                     data["verbatim"] = True
             else:
                 result["warnings"].extend(costs.get("warnings") or [])
-        if "model" in include and section != "costs":
+        if "model" in include:
             model = self._get_model(
                 {"version": version.id, "view": "math", "section": section}
             )
@@ -1660,8 +1664,8 @@ class AgentToolbox:
         只给成功路径配 markdown 是不够的：DSL 没解析出来时返回 ``clarify``，
         data 里只有给模型看的 message。此时模型可以自由发挥成"已排除了 9-13"，
         用户看到的就是一句谁也没打算说的话——真正的契约（这句没听懂）根本没
-        送到用户眼前。所以这里对**每一个**出口补 markdown，并且它属于
-        AUTHORITATIVE_TOOLS，独占本轮输出。
+        送到用户眼前。所以这里对**每一个**出口补 markdown，并在返回里声明
+        verbatim / exclusive：由工具自己保证原样且独占，不靠调用方认工具名。
         """
         return self._as_contract(self._solve_inner_cleared(arguments))
 
@@ -1688,6 +1692,10 @@ class AgentToolbox:
             if message:
                 data["markdown"] = message
                 data["verbatim"] = True
+        if isinstance(data, dict) and data.get("verbatim") is True:
+            # 契约由工具自己声明：原样附上，且本轮只交这一份。
+            # 调用方不再按工具名或用户话里的关键词猜。
+            data["exclusive"] = True
         return result
 
     def _solve_inner(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1714,7 +1722,7 @@ class AgentToolbox:
                 warnings=["槽位引擎未注入。"],
             )
         try:
-            turn = self.yx_engine.say(translate_text, timeout=90)
+            turn = self.yx_engine.session.say(translate_text, timeout=90)
         except Exception as exc:  # noqa: BLE001
             return self._as_contract(self._envelope(
                 "clarify", {"message": f"这句没接：{exc}"},
@@ -1880,6 +1888,7 @@ class AgentToolbox:
                 # "已派出/正在求解"是对用户的承诺，也不许模型改口径。
                 "markdown": message,
                 "verbatim": True,
+                "exclusive": True,
             },
             next_actions=["告诉用户大概要等多久，不要甩 job_ 这类内部任务号；不要再让用户确认一次。"],
         )

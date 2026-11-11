@@ -706,7 +706,9 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
     return selected, {'求解器':'OR-Tools CP-SAT','模型形式':'有界整数线性目标及可线性化调度约束',
         '求解器参数':solver_parameters,
         '有解':selected is not None,'解状态':solve_status,'终止原因':termination_reason,
-        '目标模式':spec.facts()['目标模式'],'权重':spec.weights,'最优性':quality,
+        # 策略/模式/权重都在 RunSpec 一次定稿，info 是它们的唯一出口；
+        # 编排层不许再 setdefault 补一份（补出来的那份可能是 None）。
+        '策略':spec.strategy,'目标模式':spec.facts()['目标模式'],'权重':spec.weights,'最优性':quality,
         # 预算与容差：公告、参数总表、版本对比都读这一份，不再各算各的。
         '预算':{'seconds':seconds,'gapLimit':gap_limit,
                 'secondsSource':budget['secondsSource'],'gapSource':budget['gapSource'],

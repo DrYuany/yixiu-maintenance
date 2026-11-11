@@ -29,8 +29,6 @@ export function AgentWorkspace() {
     selectConversation,
     sendMessage,
     controlActiveJob,
-    engine,
-    setEngine,
     quota,
     quotaBlocked,
     saveApiKey,
@@ -108,8 +106,6 @@ export function AgentWorkspace() {
           }
           onOpenVersion={openVersion}
           onControlJob={(action) => controlActiveJob(action)}
-          engine={engine}
-          onEngineChange={setEngine}
           quota={quota}
           onRequestKey={() => setKeyDialogOpen(true)}
         />

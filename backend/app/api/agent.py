@@ -4,10 +4,9 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from typing import Literal
+from pydantic import BaseModel
 
-from app.core.agent_runtime import AgentRuntime, default_engine
+from app.core.agent_runtime import AgentRuntime
 from app.core.demo_access import USER_KEY_HEADER, normalize_key
 from app.schemas.agent import AgentResponse, SolveJobPayload
 
@@ -25,10 +24,8 @@ class AgentMessageRequest(BaseModel):
     message: str
     selectedVersionId: str | None = None
     selectedWindowId: str | None = None
-    # 理解引擎：llm = LLM 主导，rule = 规则主导。
-    # 默认跟产线走（default_engine，见 agent_runtime）；前端切换控件会显式带上。
-    # 回滚：设环境变量 AGENT_ENGINE=rule，不用改代码也不用重新发版。
-    engine: Literal["llm", "rule"] = Field(default_factory=default_engine)
+    # 理解层只有 LLM 工具循环一条。旧前端仍可能带 engine 字段过来，
+    # Pydantic 默认忽略多余字段；服务端不再有第二套引擎可切换。
 
 
 def get_runtime() -> AgentRuntime:
@@ -47,7 +44,6 @@ def post_message(
             payload.message,
             selected_version_id=payload.selectedVersionId,
             selected_window_id=payload.selectedWindowId,
-            engine=payload.engine,
             llm_api_key=_visitor_key(request),
         )
     except ValueError as exc:
@@ -68,7 +64,6 @@ def post_message_stream(
             payload.message,
             selected_version_id=payload.selectedVersionId,
             selected_window_id=payload.selectedWindowId,
-            engine=payload.engine,
             llm_api_key=api_key,
         ):
             data = json.dumps(item.get("data", {}), ensure_ascii=False, default=str)

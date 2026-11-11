@@ -4,12 +4,9 @@
 - 一修：LLM 任意构造 MILP（dsl_core 的 DSL → PlanningRequest → 求解器）
 - 小一修：LLM 填 38 个预注册槽位（yxcore 的 翻译 → 补丁 → 求解器）
 
-这个模块封装 yxcore 的 Session：每个会话一张旋钮表，say 出预览、run 出求解，
-再把 yxcore 的结果映射成与一修 result_normalizer 同构的 WindowVersion 结构，
-其余（查询、记忆、求解任务、台账、前端）全部共用一修的。
+这个模块只干一件事：把 yxcore 的求解结果映射成 WindowVersion。
+会话对象由调用方直接拿（engine.session），不再套一层 say/run/clear 转发。
 """
-from __future__ import annotations
-
 from __future__ import annotations
 
 import os
@@ -39,22 +36,10 @@ def _iso_stamp(data: Any, minute: int) -> str:
 
 
 class YxEngine:
-    """一个会话一份的槽位引擎。只做「理解 + 求解 + 结果映射」，不碰状态机。"""
+    """一个会话一份的槽位引擎：持有会话状态，只负责结果映射，不碰状态机。"""
 
     def __init__(self) -> None:
         self.session = Session()
-
-    # ── 理解：一句话 → 补丁 → 回显 ───────────────────────────────────────
-    def say(self, message: str, timeout: float = 90.0):
-        """翻译 + 落地一轮，返回 yxcore 的 Turn（含回显/错误/待确认/场景）。"""
-        return self.session.say(message, timeout=timeout)
-
-    def clear(self) -> None:
-        self.session.clear()
-
-    # ── 求解：当前旋钮表 → 求解器 ────────────────────────────────────────
-    def run(self, seconds: int = _SOLVE_SECONDS) -> dict[str, Any]:
-        return self.session.run(seconds=seconds)
 
     # ── 结果映射：yxcore 产物 → 与一修同构的 WindowVersion ────────────────
     def build_version(

@@ -25,8 +25,9 @@ def _turn(**kwargs):
 
 
 def _engine(turn):
-    session = SimpleNamespace(summary=lambda: ["- 现在：最少完成 5 项"])
-    return SimpleNamespace(say=lambda text, timeout=90: turn, session=session)
+    session = SimpleNamespace(say=lambda text, timeout=90: turn,
+                              summary=lambda: ["- 现在：最少完成 5 项"])
+    return SimpleNamespace(session=session)
 
 
 def _toolbox(engine):
@@ -114,7 +115,8 @@ def test_solve_translates_user_message_not_instruction():
         captured["text"] = text
         return _turn(场景=[{"标签": "经济优先", "patches": [_patch("p1")]}])
 
-    engine = SimpleNamespace(say=say, session=SimpleNamespace(summary=lambda: []))
+    engine = SimpleNamespace(session=SimpleNamespace(
+        say=say, summary=lambda: []))
     toolbox, persisted = _toolbox(engine)
     result = toolbox._solve_inner(
         {"instruction": "改成经济优先", "scenarios": ["经济优先", "严重性优先"]})
@@ -131,7 +133,8 @@ def test_solve_falls_back_to_instruction_without_user_message():
         captured["text"] = text
         return _turn(新增=[{"字段": "x"}], echo=lambda: ["- echo"])
 
-    engine = SimpleNamespace(say=say, session=SimpleNamespace(summary=lambda: []))
+    engine = SimpleNamespace(session=SimpleNamespace(
+        say=say, summary=lambda: []))
     toolbox = AgentToolbox(
         conversation_id="c1",
         versions=SimpleNamespace(list_by_conversation=lambda cid: []),

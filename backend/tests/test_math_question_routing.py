@@ -1,43 +1,47 @@
-"""问「公式 / 权重」时不许把成本构成表当答案交出去。
+"""工具契约回归：成本构成不能混进「数学模型」的 section 枚举。
 
 线上实录：连问两次「标准化加权目标的公式？权重？」都拿到同一张
-「方案 02 的成本构成」表。根因之一是 read_versions 的 section 枚举里混了
-costs，之二是命中「公式」就走原样输出快路径、直接交卷。这里守住参数纠正。
+「方案 02 的成本构成」表。根因是 read_versions 的 section 里混了 costs，
+模型把「问公式」和「问钱」选进同一个视图；旧版靠调用前改参数的
+math_view_arguments() 补救（补丁），现在从契约上就不可能选错。
 """
 from __future__ import annotations
 
-from app.core.conversation_agent import math_view_arguments
+from types import SimpleNamespace
+
+from app.core.agent_tools import AgentToolbox
 
 
-def test_formula_question_with_costs_section_is_corrected() -> None:
-    args = {"versions": ["方案02"], "include": ["model"], "section": "costs"}
-    fixed = math_view_arguments("标准化加权目标的公式？权重？", "read_versions", args)
-    assert fixed["section"] == "objective"
-    assert fixed["include"] == ["model"]
-    assert fixed["versions"] == ["方案02"]
-    assert args["section"] == "costs"  # 原对象不许被就地改坏
+def _properties() -> dict:
+    box = AgentToolbox(
+        conversation_id="c-contract",
+        versions=SimpleNamespace(list_by_conversation=lambda _cid: []),
+        model_artifacts=None,
+    )
+    spec = next(item for item in box.tool_specs() if item["name"] == "read_versions")
+    return spec["input_schema"]["properties"]
 
 
-def test_formula_question_with_costs_include_is_corrected() -> None:
-    fixed = math_view_arguments("加权目标函数的公式？", "read_versions",
-                                {"include": ["costs"]})
-    assert fixed["section"] == "objective"
-    assert fixed["include"] == ["model"]
+def test_costs_is_an_include_value_not_a_section() -> None:
+    props = _properties()
+    assert "costs" in props["include"]["items"]["enum"], "问钱仍然要有出口"
+    assert "costs" not in props["section"]["enum"], "成本不是数学模型的一节"
+    assert set(props["section"]["enum"]) == {
+        "all", "objective", "constraints", "variables",
+    }
 
 
-def test_cost_question_is_left_alone() -> None:
-    args = {"include": ["costs"]}
-    assert math_view_arguments("方案02 的成本构成是什么", "read_versions", args) is args
-    assert math_view_arguments("船租多少钱一天", "read_versions", args) is args
+def test_formula_question_has_one_unambiguous_route() -> None:
+    props = _properties()
+    assert "section=objective" in props["include"]["description"]
+    assert 'include=["costs"]' in props["include"]["description"]
 
 
-def test_other_tools_are_untouched() -> None:
-    args = {"section": "costs"}
-    assert math_view_arguments("权重是多少", "read_environment", args) is args
-
-
-def test_weights_question_hits_the_math_hint() -> None:
-    fixed = math_view_arguments("这次的权重分别是多少", "read_versions",
-                                {"section": "objective", "include": ["model"]})
-    # 没选 costs，原参数应当原样返回（身份相同）。
-    assert fixed["section"] == "objective"
+def test_contract_result_declares_verbatim_and_exclusive() -> None:
+    """是否原样、是否独占，由工具返回声明，不靠调用方认工具名或认关键词。"""
+    result = AgentToolbox._as_contract(
+        {"status": "clarify", "data": {"message": "这句没接"}}
+    )
+    assert result["data"]["markdown"] == "这句没接"
+    assert result["data"]["verbatim"] is True
+    assert result["data"]["exclusive"] is True

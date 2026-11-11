@@ -65,3 +65,37 @@ def test_loop_reply_plain_when_unknown_kind():
     rt, captured = _runtime({"pendingChange": {"kind": "unknown-thing"}})
     rt._finalize_loop_response("c1", "好的。", None)
     assert captured["action"] == "assistant_reply"
+
+
+def _runtime_with_toolbox(filters):
+    """只钉状态接线，不注入假模型：仓库/引擎都是最小桩。"""
+    rt, captured = _runtime(filters)
+    rt.versions = SimpleNamespace(list_by_conversation=lambda cid: [])
+    rt.model_artifacts = None
+    rt.jobs = None
+    rt._yx_engine = lambda cid: SimpleNamespace(session=SimpleNamespace())
+    rt._record_tool_call = lambda record: None
+    rt._persist_agent_pending = lambda cid, payload: None
+    rt._submit_pending_change = lambda cid, pending, reason: {"ok": True}
+    return rt, captured
+
+
+def test_toolbox_loads_persisted_preview_for_next_turn_confirmation():
+    """删掉关键词确认短路后，跨轮「确认」只能靠工具读到持久化的那份预览。
+
+    线上实测过一次回归：toolbox.pending_change 每轮新建恒为 None，
+    用户回「确认」被 submit_change 拒成「还没有待确认的变更」。
+    """
+    preview = {"kind": "yx", "preview": "- 船租=14400", "sourcePrompt": "船租涨两成"}
+    rt, _ = _runtime_with_toolbox({"pendingChange": preview})
+    toolbox = rt._build_toolbox("c1", None, None)
+    assert toolbox.pending_change == preview
+
+
+def test_loop_exit_returns_submitted_solve_response():
+    """submit_change 派出求解后，交的是系统那份结构化响应，不是模型转述。"""
+    rt, captured = _runtime_with_toolbox({})
+    solved = SimpleNamespace(actionType="solve_started", solveJob="job-x")
+    rt._tls = SimpleNamespace(submitted_response=solved)
+    assert rt._finalize_loop_response("c1", "模型说已完成求解", None) is solved
+    assert not captured, "不该再走一次 _finalize_response 把任务状态盖掉"

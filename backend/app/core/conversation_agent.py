@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -31,60 +30,11 @@ TOOL_LABELS = {
     "submit_change": "提交排程变更",
 }
 
-# 下面两个是**起手提示**，不是判断：它们只决定第 0 轮要不要把 tool_choice
-# 从 auto 顶成 any（逼模型先去读工具，而不是凭记忆编数字）。
-#
-# 为什么不是判断——一句话像不像在问数据，靠词表是判不准的：会漏（换个说法就
-# 不命中）、会误伤（问概念却被拉去调工具）、会腐烂（业务词一扩张词表就追不上）。
-# 所以调不调工具最终由模型 + 工具说明决定；漏掉的那一半由 answer_grounding
-# 在**输出端**兜住：答案里的数字追不到工具结果就当场标出来。
-DATA_HINT = re.compile(
-    r"方案|版本|模型|参数|系数|约束|目标函数|公式|成本|费用|任务|窗口|船天|"
-    r"对比|比较|差异|区别|最优|可行|状态|进度"
-)
-
-OPS_HINT = re.compile(
-    r"告警|报警|缺陷|库存|备件|风机台账|部件|海事窗口|检修单|工单|"
-    r"执行反馈|船租|人工单价|系统参数|风速|电价|海况"
-)
-
-MATH_PASSTHROUGH = re.compile(
-    r"数学模型|模型公式|模型结构|数学表达|公式|LaTeX|写出来|贴出来|导出模型"
-)
-
-# Tool markdown that must be copied verbatim: formulas, cost tables, the
-# environment table, and the change contract (solve/submit_change).  Alarm/site
-# tables are exact too, but the agent may add analysis around them, so they are
-# not forced through this path.
-PASSTHROUGH_TOOLS = {"read_versions", "read_environment", "solve", "submit_change"}
-
-
-def math_view_arguments(message: str, name: str, arguments: dict) -> dict:
-    """问公式/权重却选了 costs 视图时，就地纠正成目标函数视图。
-
-    原样输出快路径会把工具返回的 markdown 直接交卷、连复核机会都没有
-    （线上实测连问两次都拿到同一张成本构成表）。与其等模型自己发现，
-    不如在工具执行前把参数改对；返回新字典，不改调用方持有的对象。
-    """
-    if name != "read_versions":
-        return arguments
-    asks_math = bool(MATH_PASSTHROUGH.search(message)) or bool(
-        re.search(r"权重|目标函数|加权|系数", message))
-    if not asks_math:
-        return arguments
-    if (arguments.get("section") != "costs"
-            and "costs" not in (arguments.get("include") or [])):
-        return arguments
-    fixed = dict(arguments)
-    fixed["section"] = "objective"
-    fixed["include"] = ["model"]
-    return fixed
-
-# 这几个工具的结果是"契约"：用户据此决定批不批、要不要等求解。
-# 让模型自由转述，就会出现"预览说排除了 5 个、模型里一条排除都没有"——
-# 用户批准的是模型的话，执行的是另一份 DSL，中间没有任何绑定。
-# 所以它们必须独占输出：连模型这一轮已经说出来的话也丢掉，只留系统那份。
-AUTHORITATIVE_TOOLS = {"solve", "submit_change"}
+# 「哪些字不许改写」和「本轮只交哪一份」由工具自己在返回里声明：
+# data["verbatim"]=True  → 这段 markdown 由系统原样附在回答末尾；
+# data["exclusive"]=True → 本轮只交系统这份，模型的转述不算数。
+# 循环既不按工具名猜，也不按用户话里的关键词猜：判断绑在数据流上，
+# 而不是绑在某句具体的话上。
 
 
 class ConversationAgentError(RuntimeError):
@@ -143,11 +93,10 @@ class ConversationAgent:
         system = self._system_prompt(memory, toolbox, selected_version, snapshot)
         tools = toolbox.tool_specs()
         collected: list[str] = []
-        # 必须原样输出的内容（公式、参数表、变更契约）。攒着，等模型把这一轮
-        # 说完再拼上去——拿到就 return 会把同一句话里还没做完的事一起丢掉。
-        # 第二项标记它是不是"契约"（见 AUTHORITATIVE_TOOLS）。
+        # 工具声明要原样附上的内容，攒到最后统一拼。不提前 return：同一句话
+        # 里还夹着别的诉求时，拿到第一段就交卷会把后半句丢掉。
+        # 第二项标记「独占输出」——变更契约不许和模型转述摆在一起。
         pending_verbatim: list[tuple[str, bool]] = []
-        tool_used = False
         # 数字溯源的依据：本轮所有工具返回的原始内容，外加用户原话。
         # 用户自己报的数（「船租压到 8 万」）不算模型编的，所以原话也算出处。
         sources: list[str] = [message]
@@ -164,18 +113,19 @@ class ConversationAgent:
             return f"{text}\n\n{note}" if text.strip() else note
 
         def _finish() -> str:
-            if any(authoritative for _, authoritative in pending_verbatim):
+            # 同一份原样内容可能被多轮工具调用重复返回，只交一次。
+            exclusive = [block for block, flag in pending_verbatim if flag]
+            if exclusive:
                 # 有契约类结果时只交契约：模型的话是转述，可能已经失真，
                 # 两份摆在一起用户没法判断哪份算数。
-                return "\n\n".join(block for block, _ in pending_verbatim)
+                return "\n\n".join(dict.fromkeys(exclusive))
             text = "".join(collected).strip()
-            for block, _ in pending_verbatim:
+            for block in dict.fromkeys(block for block, _ in pending_verbatim):
                 text = f"{text}\n\n{block}" if text else block
             return text
 
-        for round_index in range(self.max_rounds):
+        for _ in range(self.max_rounds):
             # 思考型模型不支持 tool_choice=any，统一用 auto，让模型自己决定是否调工具。
-            force_tool = False
             try:
                 with client.messages.stream(
                     model=self.model,
@@ -183,7 +133,7 @@ class ConversationAgent:
                     temperature=0.2,
                     system=system,
                     tools=tools,
-                    tool_choice={"type": "any"} if force_tool else {"type": "auto"},
+                    tool_choice={"type": "auto"},
                     messages=messages,
                 ) as stream:
                     for text in stream.text_stream:
@@ -204,7 +154,6 @@ class ConversationAgent:
                     raise ConversationAgentError("模型没有返回文本")
                 return _grounded(text)
 
-            tool_used = True
             assistant_blocks = [
                 block
                 for block in final.content
@@ -212,61 +161,40 @@ class ConversationAgent:
             ]
             messages.append({"role": "assistant", "content": assistant_blocks})
             results = []
-            verbatim_blocks: list[tuple[str, bool]] = []
             for block in tool_calls:
                 label = TOOL_LABELS.get(block.name, block.name)
                 if on_status:
                     on_status(f"{label}…")
-                result = toolbox.execute(
-                    block.name,
-                    math_view_arguments(message, block.name, dict(block.input or {})),
-                )
+                result = toolbox.execute(block.name, dict(block.input or {}))
                 data = result.get("data")
-                if (
-                    block.name in PASSTHROUGH_TOOLS
-                    # 只读工具成功才透传；契约类工具本来就不是 "ok"
-                    # （solve 给 needs_confirmation，submit_change 给 submitted），
-                    # 它们只要带 markdown 就得原样送到用户面前。
-                    and (
-                        result.get("status") == "ok"
-                        or block.name in AUTHORITATIVE_TOOLS
-                    )
-                    and isinstance(data, dict)
+                verbatim = (
+                    isinstance(data, dict)
+                    and data.get("verbatim") is True
                     and isinstance(data.get("markdown"), str)
                     and data["markdown"].strip()
-                    and (data.get("verbatim") is True or MATH_PASSTHROUGH.search(message))
-                ):
-                    verbatim_blocks.append(
-                        (data["markdown"], block.name in AUTHORITATIVE_TOOLS)
+                )
+                # 数字溯源要拿完整原文（含表格里的数），先记下来再剥离。
+                sources.append(json.dumps(result, ensure_ascii=False, default=str))
+                if verbatim:
+                    pending_verbatim.append(
+                        (data["markdown"], data.get("exclusive") is True)
                     )
-                payload = json.dumps(result, ensure_ascii=False, default=str)
-                sources.append(payload)
+                    # 原样内容由系统在末尾附一次，回喂模型时把 markdown 全文
+                    # 摘掉：否则模型复述一遍、系统又附一遍，用户看到两遍，
+                    # 且复述那份可能把公式系数改了。结构化字段照给。
+                    result = {
+                        **result,
+                        "data": {k: v for k, v in data.items() if k != "markdown"},
+                    }
                 results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": payload,
+                        "content": json.dumps(result, ensure_ascii=False, default=str),
                     }
                 )
-            if verbatim_blocks and all(b.name in PASSTHROUGH_TOOLS for b in tool_calls):
-                # 这一轮**只**在取原样内容（公式、参数表、环境表、变更契约）。
-                # 用户问的就是这个，再让模型转一轮只会拖慢并增加改写公式的风险，
-                # 所以直接交卷——这是快路径，也是绝大多数情况。
-                # 一次调多个工具时逐块保留，不能只留最后一块（会把公式挤掉）。
-                body = "\n\n".join(text for text, _ in verbatim_blocks)
-                authoritative = any(auth for _, auth in verbatim_blocks)
-                # 契约类结果独占输出：模型这轮说的话是它的转述，不是系统契约。
-                prefix = "" if authoritative else "".join(collected).strip()
-                return _grounded(f"{prefix}\n\n{body}" if prefix else body)
-            if verbatim_blocks:
-                # 这一轮除了取原样内容，**还夹着别的诉求**（比如"贴出这版公式，
-                # 再把船租压到8万"）。原来这里也是直接 return，于是后半句当场
-                # 消失，而且没有任何提示——用户以为系统听懂了，只是没做。
-                # 现在存起来，把 tool_result 回喂，等模型把这一轮说完再拼上去。
-                pending_verbatim.append((
-                    "\n\n".join(text for text, _ in verbatim_blocks),
-                    any(auth for _, auth in verbatim_blocks),
-                ))
+            # 工具结果一律回喂模型，本轮不提前交卷。原样内容由系统在末尾附上，
+            # 所以一句话里既有公式又要改排程时，后半句不会被快路径吞掉。
             if collected and not collected[-1].endswith("\n\n"):
                 collected.append("\n\n")
                 if on_token:
@@ -420,7 +348,9 @@ class ConversationAgent:
    不要先说“我去导出”，也不要事后重建冒充原模型。
 4. 输出用 Markdown，简洁可扫读；公式用 LaTeX；普通回答控制在 2 到 6 句。
    不要把工具 JSON、字段名或内部变量名倒给用户，要转成中文业务词、列表或表格。
-   公式、参数表、环境表、变更契约**原样输出**，不得改写公式、变量、系数或约束。
+   工具声明「原样输出」的公式/参数表/环境表由系统一字不改附在末尾，工具结果里
+   不给你这些原文：你只补解读，不要复述、改写、重排，也不要凭记忆补数字。
+   变更预览与提交契约由系统独占输出，你不要转述、不要另写一份承诺。
 5. 普通聊天、解释概念、询问算法原理，直接回答，不必调用工具。
    能力类问题（有哪些旋钮、strategy 四选一是哪四个）
    按上面的目录回答，不调用工具，也不需要先有方案；目录里没有的旋钮一律不能说"支持"。

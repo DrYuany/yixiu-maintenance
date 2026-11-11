@@ -40,10 +40,10 @@ def _toolbox(engine, utterance: str, captured: list[dict]) -> AgentToolbox:
 def test_run_as_is_request_creates_preview_instead_of_refusal() -> None:
     """「随便跑一个方案」不该把内部异常倒给用户，也不该丢掉预览。"""
     utterance = "你随便跑一个方案吧，然后让我看看模型"
-    engine = SimpleNamespace(
+    engine = SimpleNamespace(session=SimpleNamespace(
         say=lambda text, timeout=90: _turn(refusal="大模型没有给出任何补丁"),
-        session=SimpleNamespace(summary=lambda: ["整体排程风格按「成本最低优先」"]),
-    )
+        summary=lambda: ["整体排程风格按「成本最低优先」"],
+    ))
     captured: list[dict] = []
     result = _toolbox(engine, utterance, captured).execute("solve", {})
 
@@ -59,13 +59,13 @@ def test_run_as_is_request_creates_preview_instead_of_refusal() -> None:
 def test_business_refusal_is_not_swallowed_by_run_as_is_fallback() -> None:
     """窗口改期这类业务拒绝不能借「按现状排一版」偷偷变成可执行预览。"""
     utterance = "窗口03 缩短到 11月19号结束"
-    engine = SimpleNamespace(
+    engine = SimpleNamespace(session=SimpleNamespace(
         say=lambda text, timeout=90: _turn(
             refusal="海事窗口的起止时间是已批准的事实，不能改",
             echo_lines=["这句没接：海事窗口的起止时间是已批准的事实，不能改"],
         ),
-        session=SimpleNamespace(summary=lambda: []),
-    )
+        summary=lambda: [],
+    ))
     captured: list[dict] = []
     result = _toolbox(engine, utterance, captured).execute("solve", {})
 
@@ -80,14 +80,14 @@ def test_conflict_hint_in_preview_gives_user_a_way_out() -> None:
     assert hint and "互相拉扯" in hint and "放宽" in hint
     assert _conflict_hint(["整体排程风格按「成本最低优先」"]) is None
 
-    engine = SimpleNamespace(
+    engine = SimpleNamespace(session=SimpleNamespace(
         say=lambda text, timeout=90: _turn(
             added=[object()],
             echo_lines=["记下了：整体排程风格按「成本最低优先」",
                         "记下了：高严重度的任务｜至少修几个 = 5 个"],
         ),
-        session=SimpleNamespace(summary=lambda: summary),
-    )
+        summary=lambda: summary,
+    ))
     captured: list[dict] = []
     result = _toolbox(engine, "成本压到最低，但高风险的必须全修", captured).execute("solve", {})
     assert result["status"] == "needs_confirmation"
@@ -145,10 +145,10 @@ def test_read_jobs_never_hands_internal_id_to_model() -> None:
 
 def test_confirmation_utterance_is_not_run_as_is_request() -> None:
     """「确认生成沙盘」是确认上一份预览，不能被当成「按现状排一版」的新请求。"""
-    engine = SimpleNamespace(
+    engine = SimpleNamespace(session=SimpleNamespace(
         say=lambda text, timeout=90: _turn(refusal="大模型没有给出任何补丁"),
-        session=SimpleNamespace(summary=lambda: []),
-    )
+        summary=lambda: [],
+    ))
     captured: list[dict] = []
     result = _toolbox(engine, "确认生成沙盘", captured).execute("solve", {})
     assert result["status"] == "clarify", result

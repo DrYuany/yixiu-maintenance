@@ -2,8 +2,8 @@
 
 - 离线层：用例文件本身要规范（每条都有 id/桶/话术，且至少一条期望）——不花 token。
 - 在线层：真实话术 → 真实 agent → 机械判分，跟已存基线比对，只拦「退化」，不要求全绿。
-  用**运行时 skip**（不靠装饰器，因为 app.main 在收集阶段就会 load .env.local，装饰器的
-  configured() 判断会失真），conftest 的 SKIP_LOCAL_ENV=1 一设就跳过。
+  用真实 DeepSeek key（conftest 从 .env.local 载入），不注入假模型；没配 key 才
+  运行时 skip，不假装跑过。
 """
 from __future__ import annotations
 
@@ -36,8 +36,6 @@ def test_behavior_cases_are_wellformed() -> None:
 
 def test_behavior_no_regression() -> None:
     """在线：真实话术进真实 agent，机械判分，只拦退化（比基线更差的）。"""
-    if os.environ.get("SKIP_LOCAL_ENV") == "1":
-        pytest.skip("测试环境（SKIP_LOCAL_ENV=1）不加载 .env.local，跳过在线行为评测")
     if not configured():
         pytest.skip("未配置 DEEPSEEK/MINIMAX key，跳过在线行为评测")
     cases = load_cases(CASES_PATH)
