@@ -11,6 +11,7 @@ from product_planner import recommend, solve, verify_schedule
 from product_store import Store
 
 PROJECT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT))
 
 
 @unittest.skipUnless((PROJECT / 'data/phase1-demo').exists(), 'project fixture not bundled')
@@ -34,10 +35,52 @@ class ProductRuntimeTests(unittest.TestCase):
         earlier_ids = [task['任务编号'] for task in earlier.tasks]
         later = load_project(PROJECT, as_of='2026-10-27T18:00:00+08:00')
 
-        self.assertGreaterEqual(len(later.tasks), len(earlier.tasks))
+        later_ids = [task['任务编号'] for task in later.tasks]
+        self.assertTrue(set(earlier_ids) <= set(later_ids),
+                        '同一份台账的累计切片：先前时点的任务不能被后来的时点丢掉')
         self.assertEqual([task['任务编号'] for task in earlier.tasks], earlier_ids)
         self.assertNotEqual(earlier.meta['告警水位线'], later.meta['告警水位线'])
         self.assertNotEqual(earlier.meta['运行哈希'], later.meta['运行哈希'])
+
+    def test_alert_ledger_breakpoints_stay_solvable(self):
+        """告警只增不减，默认也不再逼全修：每个断点都要出方案并如实说少修几个。
+
+        覆盖期起点是 10-23（11 条），首批之后每 4 天多一条，台账末 11-27 共 20 条。
+        别再写「应该排不出」这类断言；少修是合法分支，不是失败。
+        """
+        from yxcore.pipeline import run as yx_run
+
+        moments = [
+            '2026-10-23T18:00:00+08:00',  # 覆盖期起点 11 条
+            '2026-10-26T18:00:00+08:00',  # 12 条
+            '2026-11-03T18:00:00+08:00',  # 新增高危 14 条
+            '2026-11-08T18:00:00+08:00',  # 15 条，演示钉住这一天
+            '2026-11-27T18:00:00+08:00',  # 台账末 20 条
+        ]
+        previous_ids = set()
+        for moment in moments:
+            with self.subTest(as_of=moment):
+                data = load_project(PROJECT, as_of=moment)
+                ids = {task['任务编号'] for task in data.tasks}
+                self.assertTrue(previous_ids <= ids,
+                                '台账是累计的，后来时点的任务编号要包含先前时点')
+                previous_ids = ids
+                with tempfile.TemporaryDirectory() as out:
+                    result = yx_run([], as_of=moment, seconds=8, output=Path(out))
+                self.assertTrue(result['排程'], '这个时点必须能排出方案')
+                self.assertNotIn('INFEASIBLE', str(result['求解'].get('解状态') or ''),
+                                 '告警涨了不该让整模型不可行')
+                total = result['推荐']['待修总数']
+                done = len(result['排程'])
+                self.assertEqual(result['部分排程'], done < total)
+                if done < total:
+                    self.assertTrue(
+                        any(f'其余 {total - done} 个这轮不修' in w for w in result['警告']),
+                        '少修了就要把少修几个说出来')
+                else:
+                    self.assertFalse(
+                        any('其余' in w and '个这轮不修' in w for w in result['警告']),
+                        '全修了就不该报少修')
 
     def test_actual_solver_and_independent_verification(self):
         data = load_project(PROJECT, as_of='2026-10-23T18:00:00+08:00')

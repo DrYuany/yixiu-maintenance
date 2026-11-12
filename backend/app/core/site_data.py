@@ -833,6 +833,7 @@ def site_report(
     """One report per site-data scope, with a compact Markdown view."""
     as_of = _as_of(snapshot)
     nature = _nature(snapshot)
+    as_of_source = str((snapshot.meta or {}).get("时点来源") or "未标注")
     selection = snapshot.window_selection or {}
     target = next(
         (
@@ -1211,6 +1212,7 @@ def site_report(
     lines = [
         f"**现场数据概览**（截至 {as_of}，{nature}数据）",
         "",
+        f"- 规划时点来源：{as_of_source}。钉住时点可复现，跟随当前时刻则按真实日历累积告警。",
         f"- 风机台账 {fleet_count} 台，部件 {component_count} 类。",
         f"- 待安排告警 {counts['open']} 项：高 {counts['bySeverity']['高']} · "
         f"中 {counts['bySeverity']['中']} · 低 {counts['bySeverity']['低']}。",
