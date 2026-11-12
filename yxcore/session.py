@@ -85,6 +85,43 @@ class Turn:
             [p.cell for p in self.无变化]
 
 
+@dataclass(frozen=True)
+class SpecSnapshot:
+    """一份「算得出方案」的规格：生效补丁 + 它当时依赖的事实层。
+
+    同一批旋钮放在不同的规划时点、不同的告警水位线上不是同一份规格——
+    台账随日历推进，旧要求套到新台账上就是另一回事。所以定稿时把事实层
+    一起记下来，之后才能回答「这版方案当时按什么数据算的」。
+
+    ``spec_key`` 只由「生效补丁 + 基座」算：事实层刷新不算新版本，
+    否则每天重跑一次就会多出一版「要求其实没变」的历史，"回到上一版"就失效了。
+    """
+
+    state: dict[str, Patch]
+    base_id: str
+    as_of: str
+    as_of_source: str
+    watermark: str
+    input_hash: str
+    spec_key: str
+
+    def describe(self) -> str:
+        return (f"{len(self.state)} 条要求，基座 {self.base_id}，"
+                f"规划时点 {self.as_of[:16].replace('T', ' ')}，"
+                f"告警水位线 {self.watermark[:16].replace('T', ' ')}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "生效补丁": [p.to_json() for p in sort_patches(list(self.state.values()))],
+            "基座": self.base_id,
+            "规划时点": self.as_of,
+            "时点来源": self.as_of_source,
+            "告警水位线": self.watermark,
+            "输入哈希": self.input_hash,
+            "规格键": self.spec_key,
+        }
+
+
 class Session:
     """一张会话来来往往的旋钮表。
 
@@ -98,6 +135,12 @@ class Session:
         self.base_id = base_id
         self.state: dict[str, Patch] = {}
         self.turns: list[Turn] = []
+        # 规格层：只有真排出过方案的那些要求才算「验证过」。
+        # state 是「用户说过并要求当前生效的表」，两者可以不一致——
+        # 不一致时就是有一批要求从没算通过，不能让它悄悄带进下一轮。
+        self._verified: SpecSnapshot | None = None
+        self._verified_history: list[SpecSnapshot] = []
+        self.last_rollback: str = ""
 
     # ── 落地 ────────────────────────────────────────────────────────────
     def _baseline(self, patch: Patch) -> float | None:
@@ -256,6 +299,10 @@ class Session:
     def clear(self) -> None:
         self.state.clear()
         self.turns.clear()
+        # 整个会话重来，锚点也一起清：清完还能「回到上一版」就自相矛盾了。
+        self._verified = None
+        self._verified_history.clear()
+        self.last_rollback = ""
 
     # ── 说一句话 ────────────────────────────────────────────────────────
     def say(self, utterance: str, data=None, options=None, *, timeout: float = 90.0,
@@ -392,13 +439,26 @@ class Session:
             "错误": t.错误,
         } for t in self.turns]
 
+    def spec_trace(self) -> list[dict[str, Any]]:
+        """规格台账：每一版「算出过方案的要求」和它当时绑的事实层。
+
+        ``trace()`` 记的是逐轮对话，回答不了「这版方案当时按哪天的台账算的」；
+        这份台账按版本记，才对得上事实层的生命周期。
+        """
+        return [s.to_dict() for s in self._verified_history]
+
     def fingerprint(self) -> str:
-        """会话指纹：算的是**生效补丁 + 轮数**。
+        """会话指纹：生效补丁 + 轮数 + 定稿时的告警水位线。
 
         只算生效补丁的话，「说了三遍才拧对」和「一次说对」会撞同一个指纹，
-        审计时分不清用户到底改过几次主意。
+        审计时分不清用户到底改过几次主意。再算上水位线，是为了把
+        「同一批要求、台账已经推进」这两种情形分开——它们不是同一份规格。
         """
-        return fingerprint(self.patches(), {"轮数": len(self.turns), "基座": self.base_id})
+        facts: dict[str, Any] = {}
+        if self._verified is not None:
+            facts = {"规划时点": self._verified.as_of,
+                     "告警水位线": self._verified.watermark}
+        return fingerprint(self.patches(), {"轮数": len(self.turns), "基座": self.base_id, **facts})
 
     # ── 校验 / 求解 ─────────────────────────────────────────────────────
     def _ensure_data(self, data=None, options=None):
@@ -438,8 +498,127 @@ class Session:
                 errors.append(error)
         return errors, warnings
 
+    # ── 规格状态机：哪份要求算数 ───────────────────────────────────────
+    def spec_status(self) -> dict[str, Any]:
+        """当前规格的验收状态，连同它依赖的事实层，给界面和调用方读。
+
+        「事实层已推进」比的是规划时点：会话里已经算过一版方案，之后日历
+        往前走、告警台账变了，那版规格就过期了。这里只如实标出来，
+        不自动重排——重排会改方案，得由用户发起。
+        """
+        v = self._verified
+        if v is not None and v.state == self.state:
+            status = "已验证"
+        elif self.state:
+            status = "未验证"
+        else:
+            status = "空"
+        meta = getattr(self.base_data, "meta", None)
+        current_as_of = str(meta.get("规划时点") or "") if isinstance(meta, dict) else ""
+        stale = bool(v and v.as_of and current_as_of and current_as_of != v.as_of)
+        out = {
+            "状态": status,
+            "生效补丁": len(self.state),
+            "基座": self.base_id,
+            "规划时点": v.as_of if v else None,
+            "时点来源": v.as_of_source if v else None,
+            "告警水位线": v.watermark if v else None,
+            "当前规划时点": current_as_of or None,
+            "事实层已推进": stale,
+            "已验证版本数": len(self._verified_history),
+            "最近失败说明": self.last_rollback,
+        }
+        if stale and v:
+            out["提醒"] = (
+                f"这版规格是按 {v.as_of[:16].replace('T', ' ')} 的台账算的，"
+                f"现在的规划时点已经是 {current_as_of[:16].replace('T', ' ')}；"
+                "重排一次才会用上新台账，别拿旧方案直接比成本。")
+        return out
+
+    def _mark_verified(self, result: dict[str, Any]) -> None:
+        """求解成功：把当前要求连这次真正用的事实层一起定稿。"""
+        meta = result.get("数据") or {}
+        snapshot = SpecSnapshot(
+            state=dict(self.state),
+            base_id=self.base_id,
+            as_of=str(meta.get("规划时点") or ""),
+            as_of_source=str(meta.get("时点来源") or ""),
+            watermark=str(meta.get("告警水位线") or ""),
+            input_hash=str(meta.get("输入哈希") or ""),
+            spec_key=fingerprint(self.patches(), {"基座": self.base_id}),
+        )
+        previous = self._verified
+        # 要求变了才是一个新版本；只是台账推进，更新锚点上的事实层即可。
+        if previous is None or previous.spec_key != snapshot.spec_key:
+            self._verified_history.append(snapshot)
+        self._verified = snapshot
+        if previous and previous.watermark and snapshot.watermark \
+                and previous.watermark != snapshot.watermark:
+            before = previous.watermark[:16].replace("T", " ")
+            after = snapshot.watermark[:16].replace("T", " ")
+            result["警告"] = list(result.get("警告") or []) + [
+                f"告警台账已经更新（水位线 {before} → {after}）：这次是在新台账上算的，"
+                "之前那版方案对应的还是旧台账，两版别直接拿来比成本。"
+            ]
+
+    def _restore_verified(self) -> str:
+        """撤回到最近一份算出过方案的规格，并用一句话说清撤掉了什么。"""
+        v = self._verified
+        if v is None:
+            return ("这是本会话第一次求解，还没有算出过方案的规格；"
+                    "刚才那些要求没验证过，下一轮仍会按它们排。")
+        if self.state == v.state:
+            return "当前要求就是上次算出过方案的那一版，没有需要撤回的改动。"
+
+        changed: list[str] = []
+        for cell, patch in self.state.items():
+            old = v.state.get(cell)
+            if old is None:
+                changed.append(f"新加的「{S.describe_patch(patch, self.base_data)}」")
+            elif old != patch:
+                changed.append(f"改过的「{S.describe_patch(patch, self.base_data)}」")
+        for cell, patch in v.state.items():
+            if cell not in self.state:
+                changed.append(f"撤掉的「{S.describe_patch(patch, self.base_data)}」")
+        self.state = dict(v.state)
+        detail = "、".join(changed[:4])
+        if len(changed) > 4:
+            detail += f" 等 {len(changed)} 处"
+        return (f"已撤回到上一份算出过方案的规格（{v.describe()}）。"
+                f"这次没验证的改动不计入后续对话：{detail}。")
+
+    def restore_verified(self) -> str:
+        """用户主动「回到上一次算得出方案的那版」。"""
+        note = self._restore_verified()
+        self.last_rollback = note
+        return note
+
+    def restore_previous(self) -> str:
+        """「回到上一版」：退到上一次算出过方案、且要求不同的那份规格。"""
+        if len(self._verified_history) < 2:
+            return "还没有更早一版算出过方案的规格，暂时回不去。"
+        self._verified_history.pop()
+        target = self._verified_history[-1]
+        self._verified = target
+        self.state = dict(target.state)
+        self.last_rollback = ""
+        return f"已回到上一版规格（{target.describe()}），当前要求按这版继续。"
+
     def run(self, **kwargs) -> dict[str, Any]:
-        """用当前状态跑一次求解。"""
+        """用当前状态跑一次求解，并据结果定稿「哪份要求算数」。
+
+        只有真的排出方案，这批要求才算验证过。求解一失败（无解、编译不过、
+        求解器抛错都算），就把没验证过的改动撤回到上一份能解出来的规格：
+        否则下一轮会拿着一份从没算通过的要求继续改，越改越对不上。
+        失败说明留在 ``last_rollback``，异常照原样抛给调用方。
+        """
         from .pipeline import run as _run
 
-        return _run(self.patches(), base_id=self.base_id, **kwargs)
+        try:
+            result = _run(self.patches(), base_id=self.base_id, **kwargs)
+        except Exception:
+            self.last_rollback = self._restore_verified()
+            raise
+        self.last_rollback = ""
+        self._mark_verified(result)
+        return result

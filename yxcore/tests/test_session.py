@@ -357,3 +357,168 @@ def test_no_resolved_intent_leaves_extra_empty(data):
     with patch("yxcore.parse.translate", fake):
         Session().say("船租涨两成", data=data, options={})
     assert fake.call_args.kwargs["extra"] == ""
+
+
+# ── 规格状态机：哪份要求算数 ────────────────────────────────────────────
+# 不真调求解器：造一份带事实层的求解结果，并允许中途改成抛错。
+# session.run() 是在函数内 from .pipeline import run，桩模块属性即可生效。
+
+def _stub_solver(monkeypatch, *, as_of="2026-11-08T18:00:00+08:00",
+                 watermark="2026-11-08T17:00:00+08:00"):
+    import yxcore.pipeline as pipeline
+
+    class Stub:
+        def __init__(self):
+            self.fail = False
+            self.calls = []
+            self.as_of = as_of
+            self.watermark = watermark
+
+        def __call__(self, patches, **kwargs):
+            self.calls.append([p.to_json() for p in patches])
+            if self.fail:
+                raise RuntimeError("求解器没算出结果")
+            return {
+                "数据": {"规划时点": self.as_of, "时点来源": "指定时点",
+                         "告警水位线": self.watermark,
+                         "输入哈希": "hash-" + self.watermark[:10]},
+                "警告": [], "排程": [], "求解": {},
+            }
+
+    stub = Stub()
+    monkeypatch.setattr(pipeline, "run", stub)
+    return stub
+
+
+def test_求解成功才把要求定稿(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    assert s.spec_status()["状态"] == "空"
+    s.apply([budget(800_000, utterance="现金不超80万")])
+    assert s.spec_status()["状态"] == "未验证"
+    s.run(seconds=5)
+    status = s.spec_status()
+    assert status["状态"] == "已验证"
+    assert status["生效补丁"] == 1
+    assert status["基座"] == "基座01"
+    assert status["规划时点"] == stub.as_of
+    assert status["告警水位线"] == stub.watermark
+    assert status["时点来源"] == "指定时点"
+    assert status["已验证版本数"] == 1
+    trace = s.spec_trace()
+    assert len(trace) == 1 and trace[0]["告警水位线"] == stub.watermark
+
+
+def test_求解失败撤回到已验证规格(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    s.apply([budget(800_000, utterance="现金不超80万")])
+    s.run(seconds=5)                                   # 定稿 A
+    s.apply([budget(900_000, utterance="改成90万")])
+    assert s.spec_status()["状态"] == "未验证"
+    stub.fail = True
+    with pytest.raises(RuntimeError, match="求解器没算出结果"):
+        s.run(seconds=5)
+    assert s.patches()[0].value == 800_000            # 回到 A
+    assert s.spec_status()["状态"] == "已验证"
+    assert "已撤回到上一份算出过方案的规格" in s.last_rollback
+    assert "改过的" in s.last_rollback
+    assert s.spec_status()["最近失败说明"] == s.last_rollback
+
+
+def test_第一次求解失败不擅自丢掉用户要求(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    stub.fail = True
+    s = Session(data)
+    s.apply([budget(800_000)])
+    with pytest.raises(RuntimeError):
+        s.run(seconds=5)
+    assert len(s.state) == 1
+    assert s.spec_status()["状态"] == "未验证"
+    assert "第一次求解" in s.last_rollback
+
+
+def test_回到上一版规格(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    s.apply([budget(800_000)])
+    s.run(seconds=5)                                   # A
+    s.apply([budget(900_000)])
+    s.run(seconds=5)                                   # B
+    assert s.spec_status()["已验证版本数"] == 2
+    assert s.patches()[0].value == 900_000
+    note = s.restore_previous()
+    assert "已回到上一版规格" in note
+    assert s.patches()[0].value == 800_000
+    assert s.spec_status()["状态"] == "已验证"
+    assert s.spec_status()["已验证版本数"] == 1
+
+
+def test_只有一版时回不去且说明白(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    s.run(seconds=5)
+    assert "暂时回不去" in s.restore_previous()
+    assert s.spec_status()["已验证版本数"] == 1
+
+
+def test_主动回到已验证规格(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    s.apply([budget(800_000)])
+    s.run(seconds=5)
+    s.apply([budget(900_000)])
+    assert "已撤回到上一份算出过方案的规格" in s.restore_verified()
+    assert s.patches()[0].value == 800_000
+    assert s.spec_status()["状态"] == "已验证"
+
+
+def test_水位线推进要提醒且不新增版本(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    s.apply([budget(800_000)])
+    s.run(seconds=5)
+    stub.watermark = "2026-11-11T18:00:00+08:00"
+    result = s.run(seconds=5)
+    assert any("告警台账已经更新" in w for w in result["警告"])
+    assert s.spec_status()["已验证版本数"] == 1       # 要求没变，不算新版本
+    assert s.spec_status()["告警水位线"] == stub.watermark
+
+
+def test_规格指纹带水位线(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    a, b = Session(data), Session(data)
+    a.apply([budget(800_000)])
+    b.apply([budget(800_000)])
+    assert a.fingerprint() == b.fingerprint()          # 都还没定稿
+    a.run(seconds=5)
+    stub.watermark = "2026-11-11T18:00:00+08:00"
+    b.run(seconds=5)
+    assert a.fingerprint() != b.fingerprint()          # 同要求、不同台账
+
+
+def test_clear_连锚点一起清(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    s.apply([budget(800_000)])
+    s.run(seconds=5)
+    s.clear()
+    assert s.state == {} and s.turns == []
+    assert s.spec_status()["已验证版本数"] == 0
+    assert s.spec_status()["状态"] == "空"
+    assert s.spec_trace() == []
+    assert "暂时回不去" in s.restore_previous()
+
+
+def test_事实层推进后规格被标为过期(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    monkeypatch.setitem(data.meta, "规划时点", stub.as_of)
+    s = Session(data)
+    s.apply([budget(800_000)])
+    s.run(seconds=5)
+    assert s.spec_status()["事实层已推进"] is False
+    monkeypatch.setitem(data.meta, "规划时点", "2026-11-12T18:00:00+08:00")
+    status = s.spec_status()
+    assert status["事实层已推进"] is True
+    assert status["状态"] == "已验证"              # 标过期，不擅自改成未验证
+    assert "重排一次" in status["提醒"]

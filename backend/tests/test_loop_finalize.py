@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.core.agent_runtime import AgentRuntime
+from app.core.agent_runtime import AgentRuntime, _solve_failure_text
 
 
 def _runtime(filters):
@@ -99,3 +99,81 @@ def test_loop_exit_returns_submitted_solve_response():
     rt._tls = SimpleNamespace(submitted_response=solved)
     assert rt._finalize_loop_response("c1", "模型说已完成求解", None) is solved
     assert not captured, "不该再走一次 _finalize_response 把任务状态盖掉"
+
+
+# ── 求解失败出口：回复要说清「哪份要求算数」 ──────────────────────────
+
+def _session_with_verified_then_failure(monkeypatch):
+    """第一次求解成功定稿，第二次抛错；返回 (会话, 定稿那条补丁)。
+
+    回滚动作在 yxcore.Session.run() 里，这组用例验的是「它撤了」之后，
+    运行时的失败回复有没有把这件事说给用户听。
+    """
+    import yxcore.pipeline as pipeline
+    from yxcore.patch import Patch
+    from yxcore.session import Session
+
+    idx = {"口径": {"kind": "budget_口径", "value": "现金"},
+           "组": {"kind": "全部"}}
+    first = Patch(slot="budget_max", index=idx, op="=", value=800_000)
+    second = Patch(slot="budget_max", index=idx, op="=", value=900_000)
+    calls = {"n": 0}
+
+    def fake_run(patches, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("求解器没算出结果")
+        return {"数据": {"规划时点": "2026-11-08T18:00:00+08:00",
+                         "时点来源": "指定时点",
+                         "告警水位线": "2026-11-08T17:00:00+08:00"},
+                "警告": [], "排程": [], "求解": {}}
+
+    monkeypatch.setattr(pipeline, "run", fake_run)
+    session = Session()
+    session.state[first.cell] = first
+    return session, first, second
+
+
+def _runtime_for_solve_failure(session):
+    rt, captured = _runtime({})
+    rt._yx_engine = lambda cid: SimpleNamespace(session=session)
+    rt._yx_build_reply = lambda cid, content, mem, result, **kw: SimpleNamespace()
+    return rt, captured
+
+
+def test_sync_solve_failure_reply_explains_rollback(monkeypatch):
+    session, first, second = _session_with_verified_then_failure(monkeypatch)
+    rt, captured = _runtime_for_solve_failure(session)
+    memory = SimpleNamespace(activeView="P01")
+    rt._yx_run_sync("c1", "现金不超80万", memory, None)      # 成功，定稿
+    session.state[second.cell] = second                        # 改主意，没验证过
+
+    rt._yx_run_sync("c1", "改成90万", memory, None)            # 失败，应撤回
+
+    assert captured["action"] == "solve_failed"
+    assert "求解没成功" in captured["content"]
+    assert "求解器没算出结果" in captured["content"]
+    assert "已撤回到上一份算出过方案的规格" in captured["content"]
+    assert list(session.state.values()) == [first]
+
+
+def test_solve_job_failure_records_rollback_note(monkeypatch):
+    session, first, second = _session_with_verified_then_failure(monkeypatch)
+    rt, captured = _runtime_for_solve_failure(session)
+    rt._yx_run_sync("c1", "现金不超80万", SimpleNamespace(activeView="P01"), None)
+    session.state[second.cell] = second
+    failed = {}
+    rt.jobs = SimpleNamespace(mark_running=lambda jid: None,
+                              mark_failed=lambda jid, msg: failed.update(msg=msg))
+
+    rt._execute_job("job-1", "c1", "改成90万")
+
+    assert "已撤回到上一份算出过方案的规格" in failed["msg"]
+    assert "已撤回到上一份算出过方案的规格" in captured["content"]
+    assert list(session.state.values()) == [first]
+
+
+def test_failure_text_tolerates_session_without_rollback_field():
+    assert _solve_failure_text(ValueError("没解出来"), object()) == "没解出来"
+    assert _solve_failure_text(
+        ValueError("没解出来"), SimpleNamespace(last_rollback="已撤回。")) == "没解出来；已撤回。"

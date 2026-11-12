@@ -42,6 +42,17 @@ from app.schemas.dashboard import DashboardResponse
 
 SHANGHAI_TZ = timezone(timedelta(hours=8))
 
+
+def _solve_failure_text(exc: Exception, session) -> str:
+    """把求解失败的原因和「要求撤回到哪一版」合成一句人话。
+
+    回滚动作在 Session.run() 里已经做完，这里只把说明带进回复。否则界面上
+    只有一句「求解没成功」，用户不知道自己刚说的那几条要求还算不算数。
+    """
+    note = getattr(session, "last_rollback", "")
+    return f"{exc}；{note}" if note else str(exc)
+
+
 # 理解层只有一条：LLM 工具循环。旧的两套引擎（llm/rule）切换与
 # AGENT_ENGINE 回滚开关随规则兜底链一起撤销，别留一个点不动的假旋钮。
 
@@ -546,6 +557,8 @@ class AgentRuntime:
         try:
             result = engine.session.run(seconds=_SOLVE_SECONDS)
         except Exception:  # noqa: BLE001
+            # 这个引擎是本场景 fork 出来的一次性会话，失败即丢弃；撤回到
+            # 「哪份要求算数」由 Session.run() 统一处理，这里不必再回滚一次。
             return None
         version_id = f"ver_{uuid4().hex[:8]}"
         version = engine.build_version(conversation_id, scenario.get("标签") or "", result, version_id)
@@ -641,7 +654,7 @@ class AgentRuntime:
             result = engine.session.run(seconds=_SOLVE_SECONDS)
         except Exception as exc:  # noqa: BLE001
             if self.jobs:
-                self.jobs.mark_failed(job_id, str(exc))
+                self.jobs.mark_failed(job_id, _solve_failure_text(exc, engine.session))
             self._batch_job_done(conversation_id, job_id, None)
             return
         version_id = f"ver_{uuid4().hex[:8]}"
@@ -716,7 +729,10 @@ class AgentRuntime:
         try:
             result = engine.session.run(seconds=_SOLVE_SECONDS)
         except Exception as exc:  # noqa: BLE001
-            return self._finalize_response(conversation_id, f"求解没成功：{exc}", "solve_failed", memory.activeView, [])
+            return self._finalize_response(
+                conversation_id,
+                f"求解没成功：{_solve_failure_text(exc, engine.session)}",
+                "solve_failed", memory.activeView, [])
         if sink:
             sink.stage("solve", "CP-SAT 求解", "done")
         return self._yx_build_reply(conversation_id, content, memory, result, solve_job_id=solve_job_id)
@@ -755,9 +771,10 @@ class AgentRuntime:
         try:
             result = engine.session.run(seconds=_SOLVE_SECONDS)
         except Exception as exc:  # noqa: BLE001
+            detail = _solve_failure_text(exc, engine.session)
             if self.jobs:
-                self.jobs.mark_failed(job_id, str(exc))
-            self._finalize_response(conversation_id, f"求解任务执行失败：{exc}", "solve_failed", "P01", [])
+                self.jobs.mark_failed(job_id, detail)
+            self._finalize_response(conversation_id, f"求解任务执行失败：{detail}", "solve_failed", "P01", [])
             return
         if self.jobs:
             self.jobs.mark_reviewing(job_id)
