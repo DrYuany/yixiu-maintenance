@@ -299,7 +299,8 @@ def _reconcile_strategy(patch: Patch, ctx: Ctx) -> tuple[str, str]:
     把它标成"通过"是撒谎——单份产物证不了最优性。
     """
     used = ctx.info.get("策略") or (ctx.request.strategy if ctx.request else None)
-    return APPLIED, f"目标策略按「{used}」求解（单份产物证明不了最优，只能证明策略生效）"
+    return APPLIED, (f"目标策略按「{used}」求解（目标偏好，只管相对优先；"
+                     "单份产物证明不了最优，也不构成「必须修」的保证）")
 
 
 def _reconcile_partial(patch: Patch, ctx: Ctx) -> tuple[str, str]:

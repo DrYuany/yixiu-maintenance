@@ -268,6 +268,7 @@ class Session:
         from .parse import LLMUnavailable, translate
 
         modules = solver_modules()
+        notes: list[str] = []
         if data is None:
             data = self.base_data or modules["load_project"](PROJECT_ROOT, base_id=self.base_id)
             self.base_data = data
@@ -275,7 +276,9 @@ class Session:
             options = {t["任务编号"]: modules["candidates"](data, t) for t in data.tasks}
         try:
             patches, reason, clarify, scenarios = translate(utterance, data, options,
-                                                            timeout=timeout, session_text=self.prompt_state())
+                                                            timeout=timeout,
+                                                            session_text=self.prompt_state(),
+                                                            notes_out=notes)
         except LLMUnavailable as exc:
             # 翻译失败不毁会话：这一轮记一条「没翻成」，表不动，用户可以再说一遍。
             # 一路抛出去的话，界面层拿到的是一条栈，而不是「刚才那句没听懂」。
@@ -297,6 +300,9 @@ class Session:
             turn.拒绝 = reason
         if clarify:
             turn.澄清 = clarify
+        if notes:
+            # 绝对优先复核改了什么，必须摆到用户面前，不静默改
+            turn.提示.extend(notes)
         if not turn.错误 and patches:
             # 一轮要么整体落地、要么整体不落地。半个补丁进状态比拦下来危险得多：
             # 下一轮会拿着这张被污染的表继续改，错的地方再也不会被提出来。
@@ -356,6 +362,7 @@ class Session:
             "澄清": (
                 [{"问": g.get("问"),
                   "候选": [{"意图": c.get("意图"),
+                            "性质": c.get("性质"), "推荐": c.get("推荐"),
                             "patches": [p.to_json() for p in c.get("patches") or []]}
                            for c in (g.get("候选") or [])]}
                  for g in t.澄清] if t.澄清 else None
