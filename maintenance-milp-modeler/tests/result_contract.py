@@ -72,12 +72,13 @@ def check(result: dict[str, Any], requirement: dict[str, Any]) -> list[str]:
 
     if "只修任务" in requirement:
         wanted = set(requirement["只修任务"])
-        # 排除语义：既不许少做点名的，也不许多做没点名的。
-        # 只写「这些之和 = N」做不到后半句，这正是要防的陷阱。
-        missing = sorted(wanted - placed)
+        # 只管排除：结果里不许出现没点名的任务。
+        #
+        # 「点名的都要修」是另一件事，用「必修任务」表达。两者正交、可组合：
+        # 小一修的 scope_only 编译成「补集压零」（m.Add(Σ补集 == 0)），
+        # 范围内的任务仍可按代价权衡走 y=1 本轮不修，所以不能顺手要求全排。
+        # 只写「这些之和 = N / 至多 N」做不到排除，这正是要防的陷阱。
         extra = sorted(placed - wanted)
-        if missing:
-            problems.append(f"只修这些：点名的任务没排上 {missing}")
         if extra:
             problems.append(f"只修这些：结果里出现了组外任务 {extra}（Σx=N 不等于只做 N 个）")
 
