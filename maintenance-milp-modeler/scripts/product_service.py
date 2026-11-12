@@ -27,7 +27,7 @@ class PlanRequest(BaseModel):
 class DraftRequest(BaseModel):
     run_id: str = Field('latest',description='推荐运行编号；填写 latest 自动使用最近一次成功推荐')
     windows: list[str] | None = Field(None,description='要生成检修单的窗口编号；为空表示全部推荐任务')
-    accept_partial: bool = Field(False,description='是否接受部分诊断方案')
+    accept_partial: bool = Field(False,description='是否明确接受这份方案里有未安排任务')
     key: str = Field(description='幂等操作编号，重试时保持不变')
 
 

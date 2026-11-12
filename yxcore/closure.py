@@ -320,9 +320,9 @@ COMPILERS: dict[str, Callable[[Any, _Ctx], None]] = {
     "scope_only": _compile_scope_only,
 }
 
-# 走数据补丁 / 参数 / 目标 / 部分的槽位不进闭包
+# 走数据补丁 / 参数 / 目标的槽位不进闭包
 NON_CLOSURE = {"deadline_delta", "part_hours", "part_arrival", "weather", "hourly",
-               "strategy", "allow_partial"}
+               "strategy"}
 
 
 def build_closure(patches, data) -> Callable | None:

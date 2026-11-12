@@ -115,30 +115,6 @@ def _static_reason(patch: Patch, data, options) -> str | None:
     return None
 
 
-def _fallback_hint(patches: list[Patch], data, base_id: str, seconds: int) -> str | None:
-    """「做不到全部」后面必须跟一句「能做多少」——否则用户只知道被拒了。
-
-    只在原本不是部分排程时试（已经是部分排程还排不出，就是别的要求太紧）。
-    试不出来就不吭声：给一个「也许可以」的空头支票比不说更糟。
-    """
-    if any(p.slot == "allow_partial" and p.op != "reset" for p in patches):
-        return None
-    from .pipeline import run
-
-    flag = Patch(slot="allow_partial", value=True, op="=", strength="hard",
-                 utterance="允许少修几个")
-    try:
-        result = run(patches + [flag], base_id=base_id, seconds=seconds, _diagnose=False)
-    except Exception:  # noqa: BLE001 - 退路试不出来就不提
-        return None
-    done = len(result["排程"] or [])
-    total = len(data.tasks)
-    if done in (0, total):
-        return None
-    return (f"给个退路：如果允许少修几个，这组要求能排出 {done}/{total} 个"
-            f"（少 {total - done} 个）。把最紧的那条改成「尽量」就行。")
-
-
 def explain_infeasible(patches: list[Patch], data, options, info: dict[str, Any],
                        request, seconds: int = PROBE_SECONDS) -> str:
     """给出不可行的原因，再补一句退路。返回一段说给用户听的话。"""
@@ -151,8 +127,8 @@ def explain_infeasible(patches: list[Patch], data, options, info: dict[str, Any]
     return text
 
 
-def _explain(patches: list[Patch], data, options, info: dict[str, Any],
-             request, seconds: int = PROBE_SECONDS) -> str:
+def explain_infeasible(patches: list[Patch], data, options, info: dict[str, Any],
+                      request, seconds: int = PROBE_SECONDS) -> str:
     status = str(info.get("解状态") or "")
     head = f"这组旋钮排不出方案（求解器判定：{status or '未给出状态'}）"
 

@@ -116,7 +116,9 @@ class Store:
             if not row: raise ValueError('运行不存在')
             report=json.loads(row[0]);snap=json.loads(row[1])
             if '推荐' not in report or not report['推荐']['复核通过']: raise ValueError('无有效推荐，不能生成检修单')
-            if report['求解'].get('诊断模型') and not accept_partial: raise ValueError('部分诊断方案需明确接受未完成任务后才可送审')
+            undone=report['推荐'].get('未安排') or []
+            if undone and not accept_partial:
+                raise ValueError(f'这份方案有 {len(undone)} 个任务未安排，需明确接受未完成任务（--accept-partial）后才可送审')
             if snap['meta'].get('业务版本',0)!=self.revision(db): raise ValueError('业务版本已变化，请重新规划')
             owned={r[0] for r in db.execute('SELECT task_id FROM ownership')}
             tasks=[s for s in report['推荐']['排程'] if s['任务编号'] not in owned and (not windows or s['窗口编号'] in windows)]

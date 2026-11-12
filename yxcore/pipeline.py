@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import slots as S
-from .apply import CompiledRequest, compile_patches, needs_partial
+from .apply import compile_patches
 from .patch import Patch, fingerprint, index_shape_error, normalize_patch
 # 注意：本模块末尾也有一个 describe（描述求解结果），所以这里必须取别名，
 # 否则导入会被后面的同名定义覆盖，对账的文本描述会调错函数。
@@ -91,12 +91,9 @@ def run(
     if errors:
         raise YxError(errors, warnings, code="校验")
 
-    request.partial = request.partial or needs_partial(patches, data, options)
-
     if request.strategy:
         strategy = request.strategy
-    fp = fingerprint(patches, {"基座": base_id, "策略": strategy,
-                               "部分排程": request.partial, "时限": seconds})
+    fp = fingerprint(patches, {"基座": base_id, "策略": strategy, "时限": seconds})
     output = output or (PROJECT_ROOT / "小一修" / "runs" / fp[:12])
     output.mkdir(parents=True, exist_ok=True)
 
@@ -162,14 +159,12 @@ def _accept(*, data, selected, info, patches, request, base_data, output,
         raise YxError(["意图对账未通过：" + audit_text], warnings, code="对账")
 
     total, done = len(data.tasks), len(selected)
-    explicit = any(p.slot == "allow_partial" and p.op != "reset" for p in patches)
-    if done < total and not explicit:
-        # 「本轮不修」是模型的合法分支，默认也会少修；按规格层开关判断会漏报。
-        reason = ("因为你限制了范围或数量" if request.partial
-                  else "本轮按不修惩罚与维修成本权衡，未排任务留在台账里待后续窗口")
+    if done < total:
+        # 「本轮不修」是模型的合法分支，默认也会少修；一律按代价权衡如实说出来。
         warnings = list(warnings) + [
             f"这次是部分排程：{total} 个任务里排了 {done} 个，"
-            f"其余 {total - done} 个这轮不修（{reason}）"
+            f"其余 {total - done} 个这轮不修"
+            "（本轮按不修惩罚与维修成本权衡，未排任务留在台账里待后续窗口）"
         ]
     unproven = list(info.get("未达最优阶段") or [])
     if unproven:
@@ -181,22 +176,19 @@ def _accept(*, data, selected, info, patches, request, base_data, output,
     # 模型产物：求解器真实写下的变量/约束/参数清单（model_artifact.json）。
     # 读失败不拦方案：数学模型页缺这一版只能说没存上，不该炸排程。
     artifact: dict[str, Any] | None = None
-    for name in ("model_artifact.json", "diagnostic_model_artifact.json"):
-        artifact_file = output / name
-        if artifact_file.exists():
-            try:
-                artifact = json.loads(artifact_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):  # noqa: BLE001
-                artifact = None
-            break
+    artifact_file = output / "model_artifact.json"
+    if artifact_file.exists():
+        try:
+            artifact = json.loads(artifact_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # noqa: BLE001
+            artifact = None
     return {
         "推荐": recommended,
         "对账": audit_text,
         "警告": warnings,
         "模型产物": artifact,
-        # 实际有没有少修，看产物；规格层有没有开「允许少修」另存一格，别混。
+        # 实际有没有少修，看产物。
         "部分排程": done < total,
-        "规格层允许少修": request.partial,
         "已证最优": not unproven,
         "未证最优目标": unproven,
     }

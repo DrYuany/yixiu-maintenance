@@ -102,7 +102,6 @@ def test_budget_shortage_is_graceful_partial_not_infeasible():
     done = len(result["排程"])
     assert 0 < done < total, "预算是硬约束，修几个是自由变量，不该退化成全修或零修"
     assert result["部分排程"] is True
-    assert result["规格层允许少修"] is False, "用户没开 allow_partial，也要如实说少修了"
     assert any(f"其余 {total - done} 个这轮不修" in w for w in result["警告"])
     penalty = (result.get("模型产物") or {}).get("unrepairedPenalty") or {}
     assert penalty and penalty["horizonDays"] == 14

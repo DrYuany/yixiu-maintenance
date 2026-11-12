@@ -56,7 +56,6 @@ class RunSpec:
     gap_limit: float
     horizon_days: float
     limits: dict
-    partial: bool
     extra_constraints: object
     hint: object
     on_solver: object
@@ -67,7 +66,7 @@ class RunSpec:
     @classmethod
     def resolve(
         cls, data, *, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None,
-        seconds=None, gap_limit=None, limits=None, partial=False,
+        seconds=None, gap_limit=None, limits=None,
         extra_constraints=None, hint=None, on_solver=None, cancelled=None,
         model_fingerprint=None,
     ):
@@ -95,7 +94,7 @@ class RunSpec:
             strategy=strategy, weights=effective,
             seconds=budget['seconds'], gap_limit=budget['gapLimit'],
             horizon_days=float((getattr(data, 'params', None) or {}).get('未修惩罚展望期（天）', 14)),
-            limits=dict(limits or {}), partial=bool(partial),
+            limits=dict(limits or {}),
             extra_constraints=extra_constraints, hint=hint, on_solver=on_solver,
             cancelled=cancelled, model_fingerprint=model_fingerprint, budget=budget,
         )
@@ -548,11 +547,11 @@ def build_model(data, options, spec: RunSpec):
     return m,choices,stages,cost
 
 
-def solve(data, options, output, seconds=None, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None, limits=None, partial=False, hint=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, gap_limit=None, spec=None):
+def solve(data, options, output, seconds=None, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None, limits=None, hint=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, gap_limit=None, spec=None):
     """求解入口。对外保留老签名（yxcore 直接调它），进来第一件事就是定稿。"""
     spec = spec or RunSpec.resolve(
         data, strategy=strategy, mode=mode, weights=weights, seconds=seconds,
-        gap_limit=gap_limit, limits=limits, partial=partial,
+        gap_limit=gap_limit, limits=limits,
         extra_constraints=extra_constraints, hint=hint, on_solver=on_solver,
         cancelled=cancelled, model_fingerprint=model_fingerprint)
     seconds = spec.seconds; gap_limit = spec.gap_limit; budget = spec.budget
@@ -652,7 +651,7 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         solver.parameters.relative_gap_limit=gap_limit if name=='总经济成本' else 0.0
         if sense=='maximize': model.Maximize(expression)
         else: model.Minimize(expression)
-        stage_model_name = ('diagnostic' if spec.partial else 'solver') + f'_model_stage_{len(logs)+1}.pbtxt'
+        stage_model_name = f'solver_model_stage_{len(logs)+1}.pbtxt'
         export_model_file(model, output/stage_model_name)
         status=solver.Solve(model);last_status=status
         log={'目标':name,'方向':sense,'状态':solver.StatusName(status),'耗时秒':solver.WallTime(),
@@ -725,16 +724,16 @@ def solve(data, options, output, seconds=None, strategy='成本最低优先', mo
         # 决胜段已整块删除，恒记「不适用」而不是 False，免得被当成「没证完」误报。
         '确定性决胜完成':'不适用',
         '阶段计划':plan,'跳过阶段数':skipped,
-        '阶段':logs,'总耗时秒':time.monotonic()-started,'模型成本':last_cost,'诊断模型':spec.partial,
+        '阶段':logs,'总耗时秒':time.monotonic()-started,'模型成本':last_cost,
         '模型产物文件':artifact['artifactFile'],'模型产物指纹':artifact_fingerprint}
 
 
-def recommend(data, output, seconds=None, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None, limits=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, partial=False, dsl=None, gap_limit=None):
+def recommend(data, output, seconds=None, strategy='成本最低优先', mode=OBJECTIVE_MODE, weights=None, limits=None, on_solver=None, cancelled=None, model_fingerprint=None, extra_constraints=None, dsl=None, gap_limit=None):
     # 与 solve() 共用同一个定稿点：CLI / 服务 / 测试走这里，Agent 走 solve()，
     # 两条路的产物字段必须来自同一份 spec，不许再各写一份。
     spec=RunSpec.resolve(
         data, strategy=strategy, mode=mode, weights=weights, seconds=seconds,
-        gap_limit=gap_limit, limits=limits, partial=partial,
+        gap_limit=gap_limit, limits=limits,
         extra_constraints=extra_constraints, on_solver=on_solver, cancelled=cancelled,
         model_fingerprint=model_fingerprint)
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
@@ -767,7 +766,7 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode=OB
                                 'tableSeconds':budget['tableSeconds'],'envCap':budget['envCap'],
                                 'requestedSeconds':budget['requestedSeconds']},
                         '分层进度':'0/0','计划阶段数':0,'执行阶段数':0,'容差内阶段':[],'未达最优阶段':[],
-                        '诊断模型':False,'模型成本':0,'分层全部最优':True,
+                        '模型成本':0,'分层全部最优':True,
                         '确定性决胜完成':'不适用',
                         '求解器参数':{'num_search_workers':WORKERS,'random_seed':17,
                                       'max_time_in_seconds':budget['seconds'],
@@ -775,27 +774,8 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode=OB
                                       'gap_scope':'仅成本阶段，其余阶段要求证明最优'}}
     else:
         best=max(baselines.values(),key=len)
-        def _run(allow_partial):
-            # 完整 / 部分两轮只换这一个标记，其它配置仍旧是同一份定稿。
-            return solve(data,options,output,spec=replace(spec,partial=allow_partial,hint=best))
-        if spec.partial:
-            # 调用方已判定"允许少修"（DSL 里出现 exclude 这类选择类约束）。
-            # 完整模式把每个任务都强制排入，跟"排除某几个"直接矛盾，跑也白跑。
-            chosen,info=_run(True)
-        else:
-            chosen,info=_run(False)
-            # 完整排程做不出来时才放宽为部分排程。
-            # 除了”已证明不可行”，还要收”时限内既没找到可行解也没排除可行”的情况：
-            # 加了业务约束后，不可行性的证明本身会变慢，只等证明会把明明存在的部分方案也一起埋掉。
-            if chosen is None and info['阶段'] and info['阶段'][-1]['状态'] in ('INFEASIBLE','UNKNOWN'):
-                formal=info
-                chosen,info=_run(True)
-                info['正式模型']=formal
-                if formal['阶段'] and formal['阶段'][-1]['状态']=='UNKNOWN':
-                    info['部分排程原因']=(
-                        '完整排程在时限内既没有找到可行解、也没有证明不可行，'
-                        '已放宽为部分排程；这不代表无解。'
-                    )
+        # 每个任务本来就带「本轮不修」分支，一次求解即可，不再先按全修试一遍再放宽。
+        chosen,info=solve(data,options,output,spec=replace(spec,hint=best))
         if chosen is None:
             # 完整与部分都没解出来，才回退启发式基线。必须留痕：来源标
             # HEURISTIC_FALLBACK 并写明原因，不能让它看起来像求解结果。
@@ -805,7 +785,7 @@ def recommend(data, output, seconds=None, strategy='成本最低优先', mode=OB
             info['方案来源']='HEURISTIC_FALLBACK'
             info['解状态']='UNKNOWN'
             info['兜底原因']=(
-                '完整排程与部分排程都没有在时限内找到可行解，'
+                '求解器在时限内没有找到可行解，'
                 '下面是未考虑本次约束的启发式基线；不代表无解。'
             )
     report={'版本':'3.0','数据':data.meta,'策略':spec.strategy,

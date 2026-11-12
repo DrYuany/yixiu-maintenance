@@ -221,7 +221,6 @@ def build_model_artifact(
     mode = spec.facts()['目标模式']
     weights = spec.weights
     limits = spec.limits
-    partial = spec.partial
     proto = model.Proto()
     variable_names = [variable.name for variable in proto.variables]
     variable_groups = Counter(_variable_group(variable.name) for variable in proto.variables)
@@ -353,7 +352,6 @@ def build_model_artifact(
         "mode": mode,
         "weights": weights,
         "limits": limits or {},
-        "partialDiagnostic": partial,
         "modelFingerprint": model_fingerprint,
         "dataSnapshot": {
             "inputHash": data.meta.get("输入哈希"),
@@ -411,14 +409,14 @@ def write_model_artifact(
     raw_model: Any,
 ) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
-    raw_path = output / ("diagnostic_solver_model.pbtxt" if artifact.get("partialDiagnostic") else "solver_model.pbtxt")
+    raw_path = output / "solver_model.pbtxt"
     export_model_file(raw_model, raw_path)
     artifact["rawModel"] = {
         "file": raw_path.name,
         "sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
         "sizeBytes": raw_path.stat().st_size,
     }
-    artifact_path = output / ("diagnostic_model_artifact.json" if artifact.get("partialDiagnostic") else "model_artifact.json")
+    artifact_path = output / "model_artifact.json"
     artifact["artifactFile"] = artifact_path.name
     artifact_path.write_text(
         json.dumps(artifact, ensure_ascii=False, indent=2),

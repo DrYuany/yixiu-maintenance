@@ -126,6 +126,25 @@ class ProductRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_project(PROJECT, overrides={'不存在参数': 10})
 
+    def test_draft_requires_explicit_acceptance_when_tasks_unarranged(self):
+        """默认少修后，送审仍要有「明确接受未完成任务」这道门。
+
+        判据看产物里实际有没有未安排任务，不看已经撤销的模式开关；
+        否则 13/15 的方案会带着 2 个没修的任务悄悄送审。
+        """
+        data=load_project(PROJECT,as_of='2026-10-23T18:00:00+08:00')
+        data.tasks=data.tasks[:3]
+        with tempfile.TemporaryDirectory() as temp:
+            out=Path(temp);store=Store(out/'state.sqlite3')
+            data=store.overlay(data)
+            result=recommend(data,out/'run',seconds=8)
+            result['推荐']['未安排']=[{'任务编号':'任务检验用','原因':'本轮不修'}]
+            run_id=store.save_run(result,data,out/'run')
+            with self.assertRaisesRegex(ValueError,'未安排'):
+                store.draft(run_id,key='draft-no',actor='制单员')
+            order=store.draft(run_id,key='draft-yes',actor='制单员',accept_partial=True)
+            self.assertEqual(order['状态'],'待审批')
+
     def test_approval_documents_inventory_and_audit(self):
         data=load_project(PROJECT,as_of='2026-10-23T18:00:00+08:00')
         data.tasks=data.tasks[:3]

@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import slots as S
-from .apply import needs_partial
 from .patch import (Patch, absolute_value, duplicate_cells, fingerprint, index_shape_error,
                     normalize_patch, sort_patches)
 
@@ -420,11 +419,6 @@ class Session:
             if error not in errors:
                 errors.append(error)
         return errors, warnings
-
-    def partial(self) -> bool:
-        """当前状态是否必须切部分排程（判据仍是 apply.needs_partial 那一份）。"""
-        data, options = self._ensure_data()
-        return needs_partial(self.patches(), data, options)
 
     def run(self, **kwargs) -> dict[str, Any]:
         """用当前状态跑一次求解。"""

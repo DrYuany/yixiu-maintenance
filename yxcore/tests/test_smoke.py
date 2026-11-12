@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from yxcore import slots as S
-from yxcore.apply import compile_patches, needs_partial
+from yxcore.apply import compile_patches
 from yxcore.patch import Patch, fingerprint, parse_patch
 from yxcore.pipeline import baseline, run
 from yxcore.validate import validate
@@ -44,14 +44,16 @@ def test_registry_self_check():
 
 
 def test_slot_count_matches_constitution():
-    """36 个可写槽位 = 21 个约束族 + 15 个标量参数。
+    """35 个可写槽位 = 20 个约束族 + 15 个标量参数。
 
     window[窗口,端] 已撤销：改窗口起止是改已批准事实，不是提要求
     （见 slots.RETIRED_SLOTS 与 README 决策 D14）。
+    allow_partial 已撤销：「本轮不修」是求解器里每个任务自带的分支，
+    不再需要一个旋钮来开模式。
     """
-    assert len(S.SLOTS) == 21
+    assert len(S.SLOTS) == 20
     assert len(S.PARAM_SLOTS) == 15
-    assert len(S.SLOTS) + len(S.PARAM_SLOTS) == 36
+    assert len(S.SLOTS) + len(S.PARAM_SLOTS) == 35
 
 
 def test_every_slot_has_route_and_reconcile():
@@ -151,17 +153,7 @@ def test_compile_is_deterministic(snapshot):
     second, _ = compile_patches(patches, data, data)
     assert first.overrides == second.overrides
     assert first.limits == second.limits
-    assert first.partial == second.partial
     assert first.echo == second.echo
-
-
-def test_partial_trigger_is_single_sourced(snapshot):
-    """决策 D10：判据只有一份。「最多修 8 个」必须切部分排程，否则必然判不可行。"""
-    data, options = snapshot
-    patches = [P(slot="count_max", op="=", value=8, index={"组": {"kind": "全部"}})]
-    assert needs_partial(patches, data, options) is True
-    assert needs_partial([P(slot="count_max", op="=", value=99,
-                            index={"组": {"kind": "全部"}})], data, options) is False
 
 
 def test_deadline_can_only_tighten(snapshot):

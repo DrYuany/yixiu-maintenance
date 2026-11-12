@@ -105,7 +105,6 @@ export interface ModelArtifact {
   strategy: string;
   mode: string;
   weights: Record<string, number> | null;
-  partialDiagnostic: boolean;
   modelFingerprint: string;
   dataSnapshot: Record<string, unknown>;
   dimensions: {

@@ -126,7 +126,7 @@ def test_run_normalizes_at_entry():
 
 # ── 部分排程必须说出来 ──────────────────────────────────────────────────
 
-def test_implicit_partial_is_announced():
+def test_partial_is_announced():
     """只修一个任务 → 只排 1 个，且把「其余几个没修」按当轮真实任务数说出来。
 
     告警里的数字从产物推，别写死 12：告警台账按天累计，10-23 时点是 10 个任务、

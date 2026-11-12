@@ -6,12 +6,13 @@
   * ``data_patches``/``timeline_patches`` ← J 组与期限（改输入行，不是改系数）
   * ``extra_constraints`` ← 其余所有族（见 closure.py）
 
-两条纪律：
+一条纪律：
 
-1. **相对运算在这里折成绝对值**。``*`` / ``+`` / ``-`` 按基座值换算完才落库，
-   模型里不留相对量——否则「涨两成」来两次就成了 1.44 倍，指纹也复现不了。
-2. **部分排程判据只有一份**（决策 D10）。执行器和对账都读 ``needs_partial``，
-   不许各写一套。大一修把它收在 compiler.needs_partial，这里照抄这个纪律。
+**相对运算在这里折成绝对值**。``*`` / ``+`` / ``-`` 按基座值换算完才落库，
+模型里不留相对量——否则「涨两成」来两次就成了 1.44 倍，指纹也复现不了。
+
+「本轮不修」是求解器里每个任务自带的分支，不需要编排层再开一个模式开关；
+「允许少修几个」这个旋钮不改变模型形状，已撤销。
 """
 from __future__ import annotations
 
@@ -22,10 +23,6 @@ from . import slots as S
 from .closure import build_closure
 from .patch import Patch, absolute_value
 
-_TRUE = {"是", "允许", True, "true"}
-_FALSE = {"否", "不允许", "禁止", False, "false"}
-
-
 @dataclass
 class CompiledRequest:
     """编译产物：直接喂给内核 solve() 的入参，外加给用户看的回显。"""
@@ -35,7 +32,6 @@ class CompiledRequest:
     strategy: str | None = None
     mode: str | None = None
     weights: dict[str, float] | None = None
-    partial: bool = False
     data_patches: list[dict] = field(default_factory=list)
     timeline_patches: list[dict] = field(default_factory=list)
     closure: Callable | None = None
@@ -43,7 +39,7 @@ class CompiledRequest:
     uncertain: list[str] = field(default_factory=list)
 
     def as_solve_kwargs(self) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"extra_constraints": self.closure, "partial": self.partial}
+        kwargs: dict[str, Any] = {"extra_constraints": self.closure}
         if self.strategy:
             kwargs["strategy"] = self.strategy
         if self.mode:
@@ -53,16 +49,6 @@ class CompiledRequest:
         if self.limits:
             kwargs["limits"] = self.limits
         return kwargs
-
-
-def _as_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if value in _TRUE:
-        return True
-    if value in _FALSE:
-        return False
-    return None
 
 
 def _to_minute(data, value: Any) -> int | None:
@@ -75,52 +61,6 @@ def _to_minute(data, value: Any) -> int | None:
         except (ValueError, AttributeError, TypeError):
             return None
     return None
-
-
-def needs_partial(patches: list[Patch], data, options: dict[str, list[dict]] | None = None) -> bool:
-    """是否必须切部分排程（允许丢任务）。**判据只有这一份**。
-
-    完整模式强制每个任务 ``sum(x)==1``，跟「这轮不修 018」「最多修 8 个」
-    「只修叶片」直接矛盾，不切就必然判不可行。
-
-    ``options`` 给了才能判断"桶是否覆盖全部候选"——「这周别动 003」只压一个时段，
-    不等于整轮不修；只有桶把所有候选都罩住时才等价于排除。给不出就按不覆盖处理，
-    宁可让求解器判不可行，也不替用户猜。
-    """
-    for patch in patches:
-        if patch.op == "reset":
-            continue
-        if patch.slot == "allow_partial":
-            flag = _as_bool(patch.value)
-            if flag:
-                return True
-        elif patch.slot == "count_max" and isinstance(patch.value, (int, float)):
-            ids = S.group_task_ids(data, patch.index.get("组", {})) or []
-            if patch.value < len(ids):
-                return True
-        elif patch.slot == "scope_only" and options:
-            # 只有「圈定范围把某个任务整轮排除在候选之外」时才需要切部分排程。
-            # 无条件切会让「只在窗口03 干」这类根本没排除任何任务的意图也丢任务——
-            # 用户没说可以少修，多丢一个就是欺骗。
-            group, error = S.scope_predicate(data, patch.index.get("范围", {}))
-            if error:
-                continue
-            for tid, rows in options.items():
-                if rows and not any(group(c) for c in rows):
-                    return True
-        elif patch.slot == "bucket_max" and patch.value == 0 and options:
-            bucket, error = S.bucket_predicate(data, patch.index.get("桶", {}))
-            group, gerror = S.group_predicate(data, patch.index.get("组", {}))
-            if error or gerror:
-                continue
-            ids = S.group_task_ids(data, patch.index.get("组", {})) or []
-            for tid in ids:
-                rows = [c for c in options.get(tid, []) if group(c)]
-                if not rows:
-                    continue
-                if all(bucket(c) for c in rows):
-                    return True  # 该任务的所有候选都被压掉了，等于整轮不修
-    return False
 
 
 def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequest, list[str]]:
@@ -154,15 +94,6 @@ def compile_patches(patches: list[Patch], data, base_data) -> tuple[CompiledRequ
             request.overrides[S.PARAM_ALIASES[patch.slot]] = value
             request.echo.append(f"参数「{patch.slot}」改成 {value}")
             continue
-        if patch.slot == "allow_partial":
-            flag = _as_bool(value)
-            if flag is None:
-                errors.append(f"allow_partial：需要 是/否，收到 {value!r}")
-                continue
-            request.partial = request.partial or flag
-            request.echo.append("允许少修几个" if flag else "要求全部排入")
-            continue
-
         # ── B 组目标 ──
         if patch.slot == "strategy":
             request.strategy = str(value)

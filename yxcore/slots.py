@@ -101,7 +101,7 @@ class Slot:
     name: str
     group: str
     label: str                      # 人话名
-    route: str                      # params|strategy|weights|limits|closure|data|timeline|partial
+    route: str                      # params|strategy|weights|limits|closure|data|timeline
     index: tuple[tuple[str, str], ...] = ()   # ((索引名, 种类), ...)
     default: Any = None             # 不生效时的值：None = 不加约束
     default_note: str = ""          # 默认值的人话说明
@@ -206,7 +206,7 @@ SLOTS: dict[str, Slot] = {
         reconcile="reconcile_count",
         examples=("最多修 8 个", "风机003 最多排 2 个", "任务022 这轮先不修",
                   "这三个里最多挑一个"),
-        note="拧到 0 = 整类不修；会触发部分排程模式（判据只有一份，见 apply.needs_partial）",
+        note="拧到 0 = 整类不修；其余任务按不修惩罚与维修成本权衡，少修由求解器自己决定",
     ),
     # D 组 · 何时修
     "bucket_min": Slot(
@@ -357,15 +357,6 @@ SLOTS: dict[str, Slot] = {
     # 不由对话改写（见下方 RETIRED_SLOTS）。用户想约束开工/收工，
     # 走任务级要求 earliest / deadline_delta；候选上界本来就是
     # min(window['结束'], task['截止分钟'])，不需要动窗口事实。
-
-    # A 组里唯一不是系数的：部分排程开关
-    "allow_partial": Slot(
-        name="allow_partial", group="A", label="允许少修几个", route="partial",
-        default=False, default_note="否（完整排程）", value_type="bool",
-        consumption="model", strength="hard", reconcile="reconcile_partial",
-        examples=("排不下就少修几个吧",),
-        note="也可由 count_max/scope_only 隐式触发，判据只有一份（apply.needs_partial）",
-    ),
 }
 
 

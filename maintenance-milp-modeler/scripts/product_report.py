@@ -26,9 +26,6 @@ def write_report(data, report, out):
     else:
         rec=report['推荐'];groups=defaultdict(list)
         for s in rec['排程']: groups[s['窗口编号']].append(s)
-        if report['求解'].get('诊断模型'):
-            warning='正式必修模型不可行；以下为部分任务诊断方案，须单独确认未完成任务。'
-            lines.append(warning);body+=f'<p class="warning">{warning}</p>'
         stages=report['求解'].get('阶段',[])
         if stages and not report['求解']['分层全部最优']:
             body+='<p>当前为已验证可行解；尚未证明全部目标最优。</p>'

@@ -303,13 +303,6 @@ def _reconcile_strategy(patch: Patch, ctx: Ctx) -> tuple[str, str]:
                      "单份产物证明不了最优，也不构成「必须修」的保证）")
 
 
-def _reconcile_partial(patch: Patch, ctx: Ctx) -> tuple[str, str]:
-    total = len(ctx.data.tasks)
-    done = len(ctx.selected)
-    return APPLIED, (f"按部分排程求解：{done}/{total} 个任务排入"
-                     + ("（全部排下了，没有少修）" if done == total else ""))
-
-
 RECONCILERS: dict[str, Callable[[Patch, Ctx], tuple[str, str]]] = {
     "reconcile_strategy": _reconcile_strategy,
     "reconcile_count": _reconcile_count,
@@ -330,7 +323,6 @@ RECONCILERS: dict[str, Callable[[Patch, Ctx], tuple[str, str]]] = {
     "reconcile_weather": _reconcile_weather,
     "reconcile_hourly": _reconcile_hourly,
     "reconcile_window": _reconcile_window,
-    "reconcile_partial": _reconcile_partial,
 }
 
 
