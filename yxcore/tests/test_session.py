@@ -332,3 +332,28 @@ def test_回显对每个槽位都不崩_有快照和没快照都要能说(data):
             patch = Patch(slot=name, index=index, op="=", value=value, strength="hard")
             for snapshot in (data, None):     # 有快照、没快照都得说得出来
                 assert S.describe_patch(patch, snapshot)
+
+
+def test_resolved_intent_is_supplement_not_replacement(data):
+    """主模型补出的完整意思只进「本次补充」，原话一字不改地进翻译。"""
+    from unittest.mock import MagicMock, patch
+
+    fake = MagicMock(return_value=([], None, None, [{"标签": "占位"}]))
+    with patch("yxcore.parse.translate", fake):
+        Session().say("可以", data=data, options={},
+                      resolved_intent="把船租单价上调两成，按现状排一版")
+    assert fake.call_args.args[0] == "可以"
+    extra = fake.call_args.kwargs["extra"]
+    assert "把船租单价上调两成" in extra
+    assert "不许从这里翻出用户没提过的新排程要求" in extra
+    assert "不许用它替换原话" in extra
+
+
+def test_no_resolved_intent_leaves_extra_empty(data):
+    """第一轮没有需要消解的指代时，提示词里不出现这一节。"""
+    from unittest.mock import MagicMock, patch
+
+    fake = MagicMock(return_value=([], None, None, [{"标签": "占位"}]))
+    with patch("yxcore.parse.translate", fake):
+        Session().say("船租涨两成", data=data, options={})
+    assert fake.call_args.kwargs["extra"] == ""

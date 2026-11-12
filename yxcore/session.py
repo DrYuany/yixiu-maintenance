@@ -258,8 +258,12 @@ class Session:
         self.turns.clear()
 
     # ── 说一句话 ────────────────────────────────────────────────────────
-    def say(self, utterance: str, data=None, options=None, *, timeout: float = 90.0) -> Turn:
+    def say(self, utterance: str, data=None, options=None, *, timeout: float = 90.0,
+            resolved_intent: str | None = None) -> Turn:
         """翻译 + 落地一轮。这是多轮的正常入口：一句话进，一张表出。
+
+        ``resolved_intent`` 是主对话模型结合最近几轮补出的完整意思，只用来
+        弄明白「可以」这类省略句指哪件事。原话另传，不替换、不改写。
 
         翻译失败（没配 key / 模型跑偏）不写进状态——半句话不许改变排程依据。
         """
@@ -273,10 +277,24 @@ class Session:
             self.base_data = data
         if options is None:
             options = {t["任务编号"]: modules["candidates"](data, t) for t in data.tasks}
+        # 补全的意思只作为「本次补充」进提示词，边界写在这段文字里，
+        # 不改公共提示词；翻译层拿到的仍是原话 + 当前旋钮清单。
+        extra = ""
+        if resolved_intent:
+            extra = (
+                "本轮完整意思（主对话模型结合最近几轮补齐，只用于消解指代）：\n"
+                f"{resolved_intent}\n"
+                "用户原话在下面单独给出。只用来弄明白「可以 / 就这么办 / 按刚才说的」"
+                "指的是哪件事；不许从这里翻出用户没提过的新排程要求，"
+                "不许用它替换原话，也不许改写原话里的数量、范围或一句多方案的需求。"
+                "这段不是新的排程指令：若它比原话多出要求，只取与原话指代相符的那一条，"
+                "其余一律忽略；一句多方案只能来自用户原话，不能来自这段。"
+            )
         try:
             patches, reason, clarify, scenarios = translate(utterance, data, options,
                                                             timeout=timeout,
                                                             session_text=self.prompt_state(),
+                                                            extra=extra,
                                                             notes_out=notes)
         except LLMUnavailable as exc:
             # 翻译失败不毁会话：这一轮记一条「没翻成」，表不动，用户可以再说一遍。

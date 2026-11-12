@@ -518,7 +518,8 @@ class AgentToolbox:
                     "说法含糊、指代或顺序不清时更要调它：它会给出**给用户点选的结构化澄清**"
                     "（会自动枚举候选，含「都不是我重新说」出口），"
                     "不要在聊天里自己问「你是指…吗」，也不要替用户挑一种含义往下推。\n"
-                    "翻译引擎拿的是用户原话；instruction 只是补充。"
+                    "翻译引擎同时拿到用户原话和你补的完整意思：原话用来核对有没有照做，"
+                    "补的意思只用来弄明白省略句指哪件事，不能替换原话、也不能凭空加新要求。"
                     "一句话里要算多个方案时，不必自己拆 scenarios——引擎会从原话识别复合需求。"
                 ),
                 "input_schema": {
@@ -526,7 +527,14 @@ class AgentToolbox:
                     "properties": {
                         "instruction": {
                             "type": "string",
-                            "description": "引擎用用户原话翻译，此参数可省略；要给就给用户原话，不要自行补参数。",
+                            "description": (
+                                "请填用户这句的完整意思。「可以 / 就这么办 / 按刚才说的」这类"
+                                "省略句要结合最近几轮补齐，写清具体是哪条排程要求、改哪个旋钮。"
+                                "系统另外单独传用户原话，这里不用重复原话；"
+                                "这份只用于翻译层消解指代，不许从历史里翻出用户没提过的新要求。"
+                                "只复述上一轮那一条待办要求，不要新增要求、不要替用户拆成多版对比；"
+                                "一句多方案只能由用户原话自己提出。"
+                            ),
                         },
                         "scenarios": {
                             "type": "array",
@@ -1701,10 +1709,10 @@ class AgentToolbox:
     def _solve_inner(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """solve 工具：把「改排程」翻译成槽位补丁，出预览，等确认（小一修理解层）。
 
-        翻译永远用**用户原话**（user_message），不用模型转写的 instruction——
-        被转写的句子会丢「一句多个方案」的完整语境，而引擎本来就能从原话里
-        识别复合需求。instruction 只在原话缺失时兜底，scenarios 只作直通场景的
-        专用输入（一修编译层遗形，小一修引擎不需要）。
+        用户原话和「补全后的完整意思」两份分开传：原话照旧进翻译、进指纹、进对账，
+        补全的意思只作为提示词补充，用来消解「可以 / 就这么办」这类指代。
+        不拿补全文本替换原话——否则系统事后是拿模型写的话去核对模型做的事，查不出错。
+        instruction 在原话缺失时仍作兜底，scenarios 只作直通场景的专用输入。
         """
         instruction = str(arguments.get("instruction") or "").strip()
         scenarios = [str(s or "").strip() for s in (arguments.get("scenarios") or []) if str(s or "").strip()]
@@ -1721,8 +1729,11 @@ class AgentToolbox:
                 {"message": "槽位引擎未接入，无法准备变更。"},
                 warnings=["槽位引擎未注入。"],
             )
+        # 模型补出的完整意思和原话一字不差时，没有需要消解的东西，不必多送一份。
+        resolved_intent = instruction if instruction and instruction != translate_text else None
         try:
-            turn = self.yx_engine.session.say(translate_text, timeout=90)
+            turn = self.yx_engine.session.say(
+                translate_text, timeout=90, resolved_intent=resolved_intent)
         except Exception as exc:  # noqa: BLE001
             return self._as_contract(self._envelope(
                 "clarify", {"message": f"这句没接：{exc}"},

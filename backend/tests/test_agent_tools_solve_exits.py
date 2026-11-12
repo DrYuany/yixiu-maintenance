@@ -25,7 +25,7 @@ def _turn(**kwargs):
 
 
 def _engine(turn):
-    session = SimpleNamespace(say=lambda text, timeout=90: turn,
+    session = SimpleNamespace(say=lambda text, timeout=90, resolved_intent=None: turn,
                               summary=lambda: ["- 现在：最少完成 5 项"])
     return SimpleNamespace(session=session)
 
@@ -111,7 +111,7 @@ def test_solve_translates_user_message_not_instruction():
     """模型转写会磨损语境（丢掉「分别排然后对比」），引擎必须拿用户原话翻译。"""
     captured = {}
 
-    def say(text, timeout=90):
+    def say(text, timeout=90, resolved_intent=None):
         captured["text"] = text
         return _turn(场景=[{"标签": "经济优先", "patches": [_patch("p1")]}])
 
@@ -129,7 +129,7 @@ def test_solve_translates_user_message_not_instruction():
 def test_solve_falls_back_to_instruction_without_user_message():
     captured = {}
 
-    def say(text, timeout=90):
+    def say(text, timeout=90, resolved_intent=None):
         captured["text"] = text
         return _turn(新增=[{"字段": "x"}], echo=lambda: ["- echo"])
 
@@ -144,3 +144,35 @@ def test_solve_falls_back_to_instruction_without_user_message():
     )
     toolbox._solve_inner({"instruction": "船租涨两成"})
     assert captured["text"] == "船租涨两成"
+
+
+def test_solve_passes_original_words_and_resolved_intent_separately():
+    """用户回「可以」时，翻译用的仍是原话，主模型补出的完整意思另送一份。"""
+    seen = {}
+
+    def say(text, timeout=90, resolved_intent=None):
+        seen.update(text=text, resolved_intent=resolved_intent)
+        return _turn()
+
+    engine = SimpleNamespace(session=SimpleNamespace(say=say, summary=lambda: []))
+    toolbox, _ = _toolbox(engine)
+    toolbox.user_message = "可以"
+    toolbox._solve_inner({"instruction": "把船租单价上调两成，按现状排一版"})
+    assert seen["text"] == "可以", "原话不能被补全的意思替换"
+    assert "船租" in (seen["resolved_intent"] or ""), "完整意思要另传到翻译层"
+
+
+def test_solve_skips_resolved_intent_when_it_equals_original_words():
+    """模型原样抄了原话时没有需要消解的东西，不多送一份。"""
+    seen = {}
+
+    def say(text, timeout=90, resolved_intent=None):
+        seen.update(text=text, resolved_intent=resolved_intent)
+        return _turn()
+
+    engine = SimpleNamespace(session=SimpleNamespace(say=say, summary=lambda: []))
+    toolbox, _ = _toolbox(engine)
+    toolbox.user_message = "船租涨两成"
+    toolbox._solve_inner({"instruction": "船租涨两成"})
+    assert seen["text"] == "船租涨两成"
+    assert seen["resolved_intent"] is None
