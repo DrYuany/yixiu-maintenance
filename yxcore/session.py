@@ -24,7 +24,7 @@ from typing import Any
 
 from . import slots as S
 from .patch import (Patch, absolute_value, duplicate_cells, fingerprint, index_shape_error,
-                    normalize_patch, sort_patches)
+                    normalize_patch, parse_patch, sort_patches)
 
 
 @dataclass
@@ -622,3 +622,78 @@ class Session:
         self.last_rollback = ""
         self._mark_verified(result)
         return result
+
+    # ── 规格状态导出 / 导入 ─────────────────────────────────────────────
+    # 只提供「能带走」的能力，不在这里决定「什么时候恢复」。持久化会改变
+    # 「服务重启 = 新会话」这个产品语义，属于调用方的决策，见
+    # docs/规格锚点持久化评估.md。
+    SPEC_FORMAT = 1
+
+    def export_spec(self) -> dict[str, Any]:
+        """把规格状态导成可存盘的纯数据，不改变当前会话。
+
+        三样东西都要带走：当前要求表（用户说过、未必算通过）、最近一份算通过
+        的规格、以及按版本记的规格台账。只带已验证那份会丢掉「回到上一版」。
+
+        边界：`turns` 是逐轮对话记录，不属于规格状态，只把轮数留作审计信息，
+        不还原对话记录。因此 `fingerprint()`（含轮数）在恢复后不会等于导出前，
+        接线方不能拿它当跨重启的等价判据。
+        """
+        return {
+            "格式版本": self.SPEC_FORMAT,
+            "基座": self.base_id,
+            "轮数": len(self.turns),
+            "当前要求": [p.to_json() for p in sort_patches(list(self.state.values()))],
+            "已验证": self._verified.to_dict() if self._verified else None,
+            "已验证历史": [s.to_dict() for s in self._verified_history],
+            "最近失败说明": self.last_rollback,
+        }
+
+    @staticmethod
+    def _decode_state(rows: list[dict[str, Any]]) -> dict[str, Patch]:
+        state: dict[str, Patch] = {}
+        for row in rows:
+            patch, error = parse_patch(row)
+            if patch is None:
+                raise ValueError(f"规格里的补丁读不回来：{error}")
+            state[patch.cell] = patch
+        return state
+
+    @staticmethod
+    def _decode_snapshot(payload: dict[str, Any] | None) -> SpecSnapshot | None:
+        if payload is None:
+            return None
+        return SpecSnapshot(
+            state=Session._decode_state(payload["生效补丁"]),
+            base_id=payload["基座"],
+            as_of=payload["规划时点"],
+            as_of_source=payload["时点来源"],
+            watermark=payload["告警水位线"],
+            input_hash=payload["输入哈希"],
+            spec_key=payload["规格键"],
+        )
+
+    def import_spec(self, payload: dict[str, Any]) -> str:
+        """从 export_spec 的数据恢复规格状态；任何一处坏了就整份拒绝。
+
+        先全部解码到临时变量、全成功了再一次性替换。半恢复比不恢复更糟：
+        会留下一张「看着像上次、其实缺了几条」的要求表。
+        """
+        try:
+            if not isinstance(payload, dict) or payload.get("格式版本") != self.SPEC_FORMAT:
+                raise ValueError("格式版本不认识")
+            state = self._decode_state(payload["当前要求"])
+            verified = self._decode_snapshot(payload["已验证"])
+            history = [self._decode_snapshot(row) for row in payload["已验证历史"]]
+            base_id = str(payload["基座"])
+            note = str(payload["最近失败说明"] or "")
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            return f"规格没恢复：{exc}；当前会话状态保持不变。"
+
+        self.state = state
+        self._verified = verified
+        self._verified_history = [h for h in history if h is not None]
+        self.base_id = base_id
+        self.last_rollback = note
+        return (f"已恢复规格状态：{len(state)} 条要求，"
+                f"{len(self._verified_history)} 版算通过的规格。")

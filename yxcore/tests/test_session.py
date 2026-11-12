@@ -522,3 +522,77 @@ def test_事实层推进后规格被标为过期(data, monkeypatch):
     assert status["事实层已推进"] is True
     assert status["状态"] == "已验证"              # 标过期，不擅自改成未验证
     assert "重排一次" in status["提醒"]
+
+
+# ── 规格状态导出 / 导入（持久化的前置能力）─────────────────────────────
+# 这里只验「能无损带走、坏数据不半恢复」，不验「重启后自动接上」——
+# 那是产品语义决策，见 docs/规格锚点持久化评估.md。
+
+def test_规格状态导出导入无损(data, monkeypatch):
+    stub = _stub_solver(monkeypatch)
+    s = Session(data)
+    s.apply([budget(800_000, utterance="现金不超80万")])
+    s.run(seconds=5)                                   # 第 1 版算通过
+    s.apply([budget(900_000, utterance="改成90万")])
+    s.run(seconds=5)                                   # 第 2 版算通过
+
+    # 制造一次求解失败：回滚说明要一起带走，state 也退回已验证那版。
+    s.apply([budget(700_000, utterance="再改成70万")])
+    stub.fail = True
+    with pytest.raises(RuntimeError):
+        s.run(seconds=5)
+    stub.fail = False
+    assert s.last_rollback
+
+    # 再放一条「用户说过但没算通过」的要求，导出时必须和已验证那份分开。
+    s.apply([budget(600_000, utterance="先记着，没算")])
+    payload = json.loads(json.dumps(s.export_spec(), ensure_ascii=False))
+    assert payload["格式版本"] == 1
+    assert len(payload["已验证历史"]) == 2
+    assert payload["已验证"]["生效补丁"] != payload["当前要求"]
+
+    t = Session(data)
+    assert "已恢复" in t.import_spec(payload)
+    assert t.state == s.state, "当前要求表要原样回来（含未验证的那条）"
+    assert t.spec_status() == s.spec_status()
+    assert t.spec_trace() == s.spec_trace(), "按版本记的规格台账不能丢"
+    assert payload["轮数"] == len(s.turns)
+    # 逐轮对话记录不在规格快照里，fingerprint() 含轮数，所以不会相等；
+    # 接线方不能拿它当跨重启的等价判据（见规格锚点持久化评估）。
+    assert t.last_rollback == s.last_rollback
+    assert "已回到上一版" in t.restore_previous(), "恢复后仍要能回到上一版"
+
+
+def test_导入坏数据整份拒绝不半恢复(data, monkeypatch):
+    _stub_solver(monkeypatch)
+    s = Session(data)
+    s.apply([budget(800_000)])
+    s.run(seconds=5)
+    good = s.export_spec()
+
+    t = Session(data)
+    t.apply([budget(500_000, utterance="这是本会话原本的状态")])
+    before = t.export_spec()
+
+    # 槽位名不在注册表是校验层的活，parse_patch 只管形状；坏数据要用形状错误。
+    bad_patch = json.loads(json.dumps(good, ensure_ascii=False))
+    bad_patch["当前要求"] = ["这不是一个补丁对象"]
+    assert "没恢复" in t.import_spec(bad_patch)
+    assert t.export_spec() == before, "坏数据不能只改一半；原状态要原封不动"
+
+    bad_history = json.loads(json.dumps(good, ensure_ascii=False))
+    bad_history["已验证"]["生效补丁"] = [{"槽位": "count_max", "运算": "不存在的运算"}]
+    assert "没恢复" in t.import_spec(bad_history), "历史规格里的坏补丁也要挡"
+
+    assert "没恢复" in t.import_spec({**good, "格式版本": 999})
+    assert "没恢复" in t.import_spec({**good, "已验证历史": "不是列表"})
+    assert t.export_spec() == before
+
+
+def test_空会话也能导出导入(data):
+    payload = json.loads(json.dumps(Session(data).export_spec(), ensure_ascii=False))
+    assert payload["已验证"] is None and payload["已验证历史"] == []
+    t = Session(data)
+    assert "已恢复" in t.import_spec(payload)
+    assert t.state == {}
+    assert t.spec_status()["状态"] == "空"
