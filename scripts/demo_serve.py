@@ -35,7 +35,7 @@ def main() -> None:
                         help="求解线程数。默认 min(8,CPU)；设 1 回到可复现模式")
     parser.add_argument("--seconds", type=int, default=60,
                         help="单次求解时限。方案通常 1~3 秒就有，后续时间用于打磨次要目标")
-    parser.add_argument("--free-turns", type=int, default=10,
+    parser.add_argument("--free-turns", type=int, default=50,
                         help="每个访客的免费对话轮数，用完要求自带 DeepSeek 密钥；0 = 不限")
     args = parser.parse_args()
 

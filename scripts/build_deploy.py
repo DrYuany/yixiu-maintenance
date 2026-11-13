@@ -128,7 +128,7 @@ def write_runtime_env() -> None:
     """写 .deploy/.env.local：云端演示的运行配置。
 
     免费轮次必须在这里显式打开——不设 DEMO_FREE_TURNS 时后端默认不限额，
-    本地开发和测试才不会被十轮限制住。
+    本地开发和测试才不会被这个轮数限制住。
 
     服务端密钥也一并带上：免费用的是"你"的额度，不带就等于免费轮次
     无法调用模型，接口会如实报错而不是换一套规则答案。访客填了自己的
@@ -140,7 +140,7 @@ def write_runtime_env() -> None:
     """
     lines = [
         "# 由 scripts/build_deploy.py 生成，重新发布时会被覆盖",
-        "DEMO_FREE_TURNS=10",
+        "DEMO_FREE_TURNS=50",
         "DEMO_DAILY_TURNS=300",
         "PLANNING_AS_OF=2026-11-08T18:00:00+08:00",
         # 部署上限只做"压"，值必须和参数总表里的求解01对齐，
@@ -215,7 +215,7 @@ def main() -> None:
     count = sum(1 for f in OUT.rglob("*") if f.is_file())
     print(f"  完成：{OUT}  {count} 个文件  {total / 1048576:.1f} MB")
     print()
-    print("  体验额度：免费 10 轮/访客，全局每日 300 轮，超过要求自带 DeepSeek 密钥")
+    print("  体验额度：免费 50 轮/访客，全局每日 300 轮，超过要求自带 DeepSeek 密钥")
     print("  服务端密钥：已随 .env.local 打包，只用于免费轮次")
     print("  演示规划时点：钉在 2026-11-08 18:00（15 条告警，可复现）；生产不设即跟随当天")
     print()

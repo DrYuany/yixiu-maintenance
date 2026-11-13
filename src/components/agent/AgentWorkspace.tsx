@@ -133,7 +133,7 @@ export function AgentWorkspace() {
       <ApiKeyDialog
         open={keyDialogOpen}
         hasKey={Boolean(quota?.ownKey)}
-        limit={quota?.limit ?? 10}
+        limit={quota?.limit ?? 50}
         onClose={() => setKeyDialogOpen(false)}
         onSubmit={async (key) => {
           await saveApiKey(key);
