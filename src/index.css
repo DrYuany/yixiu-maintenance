@@ -3185,3 +3185,144 @@ button { cursor: pointer; }
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ── 窄屏收口 ───────────────────────────────────────────────────────────
+   放在文件最后：早期散落的 @media 补丁里有 .agent-rail{display:none}、
+   .plan-history-panel{display:none}、height:100vh 等规则，这里统一覆盖。
+   桌面 (>=721px) 只多三个 display:none 的空按钮，布局一字不改。          */
+
+.mobile-nav-button,
+.mobile-panel-backdrop,
+.mobile-panel-close { display: none; }
+
+@media (max-width: 720px) {
+  html, body, #root { max-width: 100%; overflow-x: hidden; }
+
+  .agent-workspace {
+    position: relative;
+    height: 100dvh;
+    min-height: 100dvh;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .agent-canvas {
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: 56px minmax(0, 1fr) auto;
+  }
+
+  /* 顶栏：标题收窄，两个侧栏入口 + 额度胶囊并排，不换行不挤出屏幕 */
+  .agent-topbar { padding: 0 12px; gap: 8px; }
+  .agent-topbar > div:first-child { min-width: 0; }
+  .agent-topbar strong { font-size: 14px; white-space: nowrap; }
+  .agent-topbar > div:first-child > span {
+    overflow: hidden;
+    font-size: 10px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .agent-topbar > .agent-topbar-side { gap: 6px; flex: 0 0 auto; }
+  .mobile-nav-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 34px;
+    padding: 5px 8px;
+    border: 1px solid #dfe6ef;
+    border-radius: 9px;
+    background: #fff;
+    color: #3f5675;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .mobile-nav-button:active { background: #eef4fd; }
+  .quota-pill { padding: 5px 7px; font-size: 10px; white-space: nowrap; }
+  .quota-pill svg { display: none; }
+
+  /* 对话区与输入区：放宽可读字号，输入框避开 iOS 自动缩放与底部安全区 */
+  .agent-thread { padding: 16px 12px 8px; }
+  .thread-message { grid-template-columns: 26px minmax(0, 1fr); gap: 8px; margin-bottom: 20px; }
+  .message-avatar { width: 26px; height: 26px; }
+  .message-content { padding: 11px 12px; font-size: 14px; line-height: 1.7; }
+  .message-markdown { overflow-wrap: anywhere; }
+  .message-markdown table { display: block; width: 100%; overflow-x: auto; }
+  .agent-empty h2 { font-size: 19px; }
+  .agent-empty p { padding: 0 8px; font-size: 13px; }
+  .empty-capabilities { flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .agent-composer-wrap { padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .agent-composer textarea { min-height: 60px; font-size: 16px; }
+  .suggestion-row button { padding: 7px 11px; font-size: 12px; }
+  .clarify-option { padding: 8px 12px; font-size: 13px; }
+
+  /* 两条侧栏不再 display:none，改成从两侧呼出的抽屉 */
+  .agent-rail,
+  .plan-history-panel {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 62;
+    display: flex;
+    width: min(84vw, 320px);
+    max-width: 320px;
+    height: 100dvh;
+    overflow-y: auto;
+    border: 0;
+    box-shadow: 0 12px 40px rgba(15, 23, 42, .22);
+    transition: transform .22s ease;
+  }
+  .agent-rail { left: 0; transform: translateX(-105%); }
+  .plan-history-panel { right: 0; left: auto; transform: translateX(105%); border-left: 1px solid #e3e8ef; }
+  .agent-workspace.mobile-rail-open .agent-rail { transform: none; }
+  .agent-workspace.mobile-plans-open .plan-history-panel { transform: none; }
+  .mobile-panel-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    width: 100%;
+    border: 0;
+    background: rgba(15, 23, 42, .38);
+  }
+  .mobile-panel-close {
+    display: grid;
+    position: fixed;
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    z-index: 64;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid #e2e8ef;
+    border-radius: 9px;
+    background: #fff;
+    color: #5a687d;
+    cursor: pointer;
+  }
+  .mobile-panel-close.is-rail { left: calc(min(84vw, 320px) - 46px); }
+  .mobile-panel-close.is-plans { right: calc(min(84vw, 320px) - 46px); }
+
+  /* 结果卡：指标收敛到两列、字号提到手机上能读；抽屉占满宽度 */
+  .result-metrics,
+  .window-answer-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .result-metrics > div,
+  .window-answer-metrics > div { padding: 11px 10px; }
+  .result-metrics span,
+  .window-answer-metrics span { font-size: 11px; }
+  .result-metrics strong,
+  .window-answer-metrics strong { font-size: 13px; white-space: normal; }
+  .schedule-row { grid-template-columns: 26px minmax(0, 1fr); }
+  .schedule-task, .schedule-time { font-size: 12px; }
+  .schedule-task small, .schedule-time small { font-size: 11px; }
+  .plan-detail-drawer { width: 100%; }
+  .detail-kpi-grid,
+  .audit-summary-grid,
+  .model-dimension-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-kpi-grid span,
+  .audit-summary-grid span,
+  .model-dimension-grid span { font-size: 11px; }
+  .detail-kpi-grid strong { font-size: 13px; }
+  .audit-checks,
+  .model-parameter-table { grid-template-columns: 1fr; }
+  .quota-banner { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .agent-context-bar { flex-wrap: wrap; }
+}

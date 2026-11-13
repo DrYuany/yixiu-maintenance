@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { X } from "lucide-react";
 import { useAgentStore } from "../../store/agent-store";
 import { ApiKeyDialog } from "./ApiKeyDialog";
 import { ConversationCanvas } from "./ConversationCanvas";
@@ -38,6 +39,8 @@ export function AgentWorkspace() {
   const [contextVersionId, setContextVersionId] = useState<string | null>(null);
   const [detailVersionId, setDetailVersionId] = useState<string | null>(null);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  // 窄屏把两条侧栏收成呼出抽屉。桌面完全不渲染这些按钮，也不加这些 class。
+  const [mobilePanel, setMobilePanel] = useState<"rail" | "plans" | null>(null);
   const chronologicalVersions = sortVersionsChronologically(versions);
   const contextVersion =
     versions.find((item) => item.id === contextVersionId) ?? versions[0] ?? null;
@@ -48,6 +51,7 @@ export function AgentWorkspace() {
   const openVersion = useCallback((versionId: string) => {
     setContextVersionId(versionId);
     setDetailVersionId(versionId);
+    setMobilePanel(null);
   }, []);
   const closeVersion = useCallback(() => {
     setDetailVersionId(null);
@@ -72,13 +76,22 @@ export function AgentWorkspace() {
     if (quotaBlocked) setKeyDialogOpen(true);
   }, [quotaBlocked]);
 
+  const workspaceClass = [
+    "agent-workspace",
+    mobilePanel === "rail" ? "mobile-rail-open" : "",
+    mobilePanel === "plans" ? "mobile-plans-open" : "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className="agent-workspace">
+    <div className={workspaceClass}>
       <ConversationRail
         conversations={conversations}
         activeId={currentConversationId}
         onCreate={() => void createConversation()}
-        onSelect={(id) => void selectConversation(id)}
+        onSelect={(id) => {
+          setMobilePanel(null);
+          void selectConversation(id);
+        }}
       />
       {loading ? (
         <main className="agent-loading" aria-label="Agent 对话">正在恢复会话…</main>
@@ -108,8 +121,28 @@ export function AgentWorkspace() {
           onControlJob={(action) => controlActiveJob(action)}
           quota={quota}
           onRequestKey={() => setKeyDialogOpen(true)}
+          onOpenRail={() => setMobilePanel((panel) => panel === "rail" ? null : "rail")}
+          onOpenPlans={() => setMobilePanel((panel) => panel === "plans" ? null : "plans")}
         />
       )}
+      {mobilePanel ? (
+        <>
+          <button
+            type="button"
+            className="mobile-panel-backdrop"
+            aria-label="关闭侧栏"
+            onClick={() => setMobilePanel(null)}
+          />
+          <button
+            type="button"
+            className={`mobile-panel-close is-${mobilePanel}`}
+            aria-label="关闭侧栏"
+            onClick={() => setMobilePanel(null)}
+          >
+            <X size={16} />
+          </button>
+        </>
+      ) : null}
       {error ? <div className="agent-error">{error}</div> : null}
       <PlanHistoryPanel
         versions={versions}

@@ -3,8 +3,10 @@ import {
   Bot,
   ChevronDown,
   Database,
+  History,
   KeyRound,
   Layers3,
+  Menu,
   Paperclip,
   Play,
   Send,
@@ -46,6 +48,9 @@ interface Props {
   /** 免费体验额度；null 表示服务端没开限额或还没读到 */
   quota?: QuotaInfo | null;
   onRequestKey?: () => void;
+  /** 窄屏呼出会话列表 / 方案记录抽屉；桌面按钮由 CSS 隐藏 */
+  onOpenRail?: () => void;
+  onOpenPlans?: () => void;
 }
 
 const suggestions = [
@@ -155,6 +160,8 @@ export function ConversationCanvas({
   onControlJob,
   quota = null,
   onRequestKey = () => undefined,
+  onOpenRail = () => undefined,
+  onOpenPlans = () => undefined,
 }: Props) {
   const [value, setValue] = useState("");
   const [showProcess, setShowProcess] = useState(true);
@@ -207,6 +214,22 @@ export function ConversationCanvas({
           <span>{SITE_NAME}</span>
         </div>
         <div className="agent-topbar-side">
+          <button
+            type="button"
+            className="mobile-nav-button"
+            onClick={onOpenRail}
+            aria-label="打开会话列表"
+          >
+            <Menu size={14} />会话
+          </button>
+          <button
+            type="button"
+            className="mobile-nav-button"
+            onClick={onOpenPlans}
+            aria-label="打开方案记录"
+          >
+            <History size={14} />方案
+          </button>
           {quota && (quota.enabled || quota.ownKey) ? (
             <button
               type="button"
