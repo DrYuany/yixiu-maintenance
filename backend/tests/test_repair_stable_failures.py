@@ -18,6 +18,12 @@ from app.core.conversation_agent import ConversationAgent
 from app.evals.online_scorers import evaluate_turn
 
 
+def _patch(value="成本最低优先"):
+    """假补丁：describe_patch 要读 slot/value，预览拼装才跑得通。"""
+    return SimpleNamespace(to_json=lambda: {"slot": "strategy", "value": value},
+                           slot="strategy", index=None, value=value)
+
+
 def _turn(*, refusal=None, added=(), echo_lines=()):
     return SimpleNamespace(
         场景=None, 澄清=None, 错误=[], 拒绝=refusal,
@@ -43,6 +49,7 @@ def test_run_as_is_request_creates_preview_instead_of_refusal() -> None:
     engine = SimpleNamespace(session=SimpleNamespace(
         say=lambda text, timeout=90, resolved_intent=None: _turn(refusal="大模型没有给出任何补丁"),
         summary=lambda: ["整体排程风格按「成本最低优先」"],
+        patches=lambda: [], base_data=None,
     ))
     captured: list[dict] = []
     result = _toolbox(engine, utterance, captured).execute("solve", {})
@@ -65,6 +72,7 @@ def test_business_refusal_is_not_swallowed_by_run_as_is_fallback() -> None:
             echo_lines=["这句没接：海事窗口的起止时间是已批准的事实，不能改"],
         ),
         summary=lambda: [],
+        patches=lambda: [], base_data=None,
     ))
     captured: list[dict] = []
     result = _toolbox(engine, utterance, captured).execute("solve", {})
@@ -82,11 +90,11 @@ def test_conflict_hint_in_preview_gives_user_a_way_out() -> None:
 
     engine = SimpleNamespace(session=SimpleNamespace(
         say=lambda text, timeout=90, resolved_intent=None: _turn(
-            added=[object()],
+            added=[_patch()],
             echo_lines=["记下了：整体排程风格按「成本最低优先」",
                         "记下了：高严重度的任务｜至少修几个 = 5 个"],
         ),
-        summary=lambda: summary,
+        summary=lambda: summary, patches=lambda: [], base_data=None,
     ))
     captured: list[dict] = []
     result = _toolbox(engine, "成本压到最低，但高风险的必须全修", captured).execute("solve", {})
@@ -148,6 +156,7 @@ def test_confirmation_utterance_is_not_run_as_is_request() -> None:
     engine = SimpleNamespace(session=SimpleNamespace(
         say=lambda text, timeout=90, resolved_intent=None: _turn(refusal="大模型没有给出任何补丁"),
         summary=lambda: [],
+        patches=lambda: [], base_data=None,
     ))
     captured: list[dict] = []
     result = _toolbox(engine, "确认生成沙盘", captured).execute("solve", {})

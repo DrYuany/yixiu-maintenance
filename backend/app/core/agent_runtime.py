@@ -482,7 +482,16 @@ class AgentRuntime:
 
     def _submit_pending_change(self, conversation_id, pending, reason):
         memory = self.memories.get_or_create(conversation_id)
-        if pending.get("kind") != "yx":
+        kind = pending.get("kind")
+        # 澄清中的变更不是「失效」，是「还没答完」。这两种话必须分开说：
+        # 说失效会让用户以为要重说一遍需求，于是再翻译一遍，越走越远。
+        if kind == "clarify":
+            return {"ok": False,
+                    "message": "这句还没定下来：先点选上面的选项（或重新说一句），再确认。"}
+        # yx 与 batch 都是「已出过预览、等用户点头」的形态，批量只是换成 N 份
+        # 补丁各算一版。之前只认 yx，导致确认多方案时恒返回「已经失效」，
+        # 模型只能反复重译重预览，1 个方案都出不来。
+        if kind not in {"yx", "batch"}:
             return {"ok": False, "message": "待确认的变更已经失效。"}
         self._clear_persisted_pending(conversation_id)
         resp = self._start_planning_solve(conversation_id, pending, memory, None)
@@ -529,6 +538,10 @@ class AgentRuntime:
         """复合需求：并发 fork N 个求解任务，全部算完后汇合对比。"""
         scenarios = pending.get("scenarios") or []
         labels = [str(sc.get("标签") or f"方案{i+1}") for i, sc in enumerate(scenarios)]
+        # 场景补丁只描述这一句要换的那个维度，不含本会话此前已确认的要求。
+        # 把当前生效的补丁一起带进每个场景（先铺底、再叠本场景），否则批量
+        # 一确认就把「船租、最多修几个」这类前几轮的要求全丢了。
+        base_patches = [p.to_json() for p in self._yx_engine(conversation_id).session.patches()]
         filters = dict(memory.activeFilters)
         filters["pendingBatch"] = {"total": len(scenarios), "completed": [], "labels": labels}
         self.memories.apply_patch(memory, {"activeFilters": filters})
@@ -536,44 +549,70 @@ class AgentRuntime:
             # 测试/降级：同步逐个跑，再对比
             versions = []
             for sc in scenarios:
-                version = self._run_batch_scenario_sync(conversation_id, sc)
+                version = self._run_batch_scenario_sync(conversation_id, sc, base_patches)
                 if version is not None:
                     versions.append(version)
             if versions:
                 self._emit_batch_compare(conversation_id, [v.id for v in versions])
             return self._finalize_response(conversation_id, "批量求解已完成。", "solve_completed", "P01", versions)
         # 并发 fork：每个场景一个独立任务
+        jobs = []
         for i, sc in enumerate(scenarios):
             job = self.jobs.create(
                 conversation_id,
-                {"kind": "batch", "label": labels[i], "patches": sc.get("patches") or [], "budgetSeconds": _SOLVE_SECONDS},
+                {"kind": "batch", "label": labels[i], "patches": sc.get("patches") or [],
+                 "basePatches": base_patches, "budgetSeconds": _SOLVE_SECONDS},
                 "",
             )
+            jobs.append(job)
             self._futures[job.id] = self.job_pool.submit(
-                self._execute_batch_job, job.id, conversation_id, labels[i], sc.get("patches") or []
+                self._execute_batch_job, job.id, conversation_id, labels[i],
+                sc.get("patches") or [], base_patches
             )
         return self._finalize_response(
             conversation_id,
             f"已并发启动 {len(scenarios)} 个求解任务，全部算完会自动出方案卡和对比。",
             "solve_started", "P01", [],
             solve_evidence=SolveEvidencePayload(status="UNKNOWN", running=True, phase="queued"),
+            # 带一个真实任务号：前端靠它开始轮询，否则批量求解算完也不会刷新。
+            # 其余任务由 /jobs 列表随每一次轮询补齐。
+            solve_job=SolveJobPayload(**jobs[0].model_dump()) if jobs else None,
         )
 
-    def _run_batch_scenario_sync(self, conversation_id, scenario):
-        from yxcore.patch import parse_patch
+    @staticmethod
+    def _fresh_session_engine() -> YxEngine:
+        """批量场景用的独立引擎。
+
+        它不经过 ``say()``（没有翻译、直接套补丁），所以会话里的基础快照还
+        没加载；不先装上，后面的 ``build_version`` 读 ``session.base_data``
+        会拿到 None 直接抛错，每个场景都算失败、0 个方案。
+        """
         engine = YxEngine()
+        engine.session._ensure_data()
+        return engine
+
+    def _run_batch_scenario_sync(self, conversation_id, scenario, base_patches=()):
+        from yxcore.patch import parse_patch
+        engine = self._fresh_session_engine()
         patches = self._patches_from_payload(scenario.get("patches") or [])
+        base = self._patches_from_payload(list(base_patches))
+        if base:
+            base_turn = engine.session.apply(base)
+            if base_turn.错误:
+                return None
         turn = engine.session.apply(patches)
         if turn.错误:
             return None
         try:
             result = engine.session.run(seconds=_SOLVE_SECONDS)
+            version_id = f"ver_{uuid4().hex[:8]}"
+            version = engine.build_version(conversation_id, scenario.get("标签") or "",
+                                           result, version_id)
         except Exception:  # noqa: BLE001
             # 这个引擎是本场景 fork 出来的一次性会话，失败即丢弃；撤回到
             # 「哪份要求算数」由 Session.run() 统一处理，这里不必再回滚一次。
+            # 建版本失败也归这里：少一版好过整批抛出去一版都没有。
             return None
-        version_id = f"ver_{uuid4().hex[:8]}"
-        version = engine.build_version(conversation_id, scenario.get("标签") or "", result, version_id)
         self.versions.add(version)
         if self.candidates is not None:
             self.candidates.replace_for_version(conversation_id, version.id, version.windows)
@@ -651,9 +690,19 @@ class AgentRuntime:
         options.append(ClarificationOptionPayload(label="都不是，我重新说", value="__custom__"))
         return text, options
 
-    def _execute_batch_job(self, job_id, conversation_id, label, raw_patches):
-        engine = YxEngine()
+    def _execute_batch_job(self, job_id, conversation_id, label, raw_patches, base_patches=()):
+        engine = self._fresh_session_engine()
         patches = self._patches_from_payload(raw_patches)
+        base = self._patches_from_payload(list(base_patches))
+        if base:
+            # 铺底：本会话此前已确认的要求。套不上就直接失败，不要静默退化成
+            # 「只按这一维度排」——那样算出来的方案看着有、其实少了约束。
+            base_turn = engine.session.apply(base)
+            if base_turn.错误:
+                if self.jobs:
+                    self.jobs.mark_failed(job_id, "；".join(base_turn.错误))
+                self._batch_job_done(conversation_id, job_id, None)
+                return
         turn = engine.session.apply(patches)
         if self.jobs:
             self.jobs.mark_running(job_id)
@@ -664,13 +713,16 @@ class AgentRuntime:
             return
         try:
             result = engine.session.run(seconds=_SOLVE_SECONDS)
+            version_id = f"ver_{uuid4().hex[:8]}"
+            version = engine.build_version(conversation_id, label, result, version_id,
+                                           solve_job_id=job_id)
         except Exception as exc:  # noqa: BLE001
+            # 建版本这一步也算在本任务里：它抛出去的话任务永远停在 RUNNING，
+            # 前端会一直轮询、批量永远不汇合——用户看到的就是「一直在循环」。
             if self.jobs:
                 self.jobs.mark_failed(job_id, _solve_failure_text(exc, engine.session))
             self._batch_job_done(conversation_id, job_id, None)
             return
-        version_id = f"ver_{uuid4().hex[:8]}"
-        version = engine.build_version(conversation_id, label, result, version_id, solve_job_id=job_id)
         self.versions.add(version)
         if self.candidates is not None:
             self.candidates.replace_for_version(conversation_id, version.id, version.windows)

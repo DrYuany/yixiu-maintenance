@@ -558,6 +558,8 @@ class AgentToolbox:
                     "  ① 用户在同一句话里既说了改什么、又说了直接算"
                     "（「船租改8万，直接算，不用问我」）；\n"
                     "  ② 用户回复确认（「算吧」「可以」「开始」）。\n"
+                    "确认这一种**不要先调 solve**：上一轮的预览就是用户点头的那一份，"
+                    "再翻译一遍等于换了一套要求，任务永远起不来。\n"
                     "用户只是在问、在犹豫、在比较、在讨价还价时，不许调。\n"
                     "调完要告诉用户任务号和大概等多久。"
                 ),
@@ -1743,13 +1745,23 @@ class AgentToolbox:
         # pendingChange kind=batch，消费方是 runtime 的 _start_batch_solve，
         # preview 存进 payload 供循环出口直接取用。
         if turn.场景:
+            from yxcore import slots as S  # noqa: PLC0415
             scenarios = [
                 {"标签": str(sc.get("标签") or f"方案{i + 1}"),
                  "patches": [p.to_json() for p in sc.get("patches") or []]}
                 for i, sc in enumerate(turn.场景)
             ]
-            labels = [sc["标签"] for sc in scenarios]
-            preview = ("将按这些方案分别排：\n" + "\n".join(f"- {lab}" for lab in labels)
+            # 预览要能让用户核对「点确认到底按什么算」：只列方案名等于让人闭眼点头，
+            # 所以逐条写出该方案的改动，并说明其余要求沿用当前已生效的那些
+            # （批量求解会先铺底再叠本方案，这句不是客套话）。
+            blocks = []
+            for i, sc in enumerate(turn.场景):
+                label = scenarios[i]["标签"]
+                descs = [S.describe_patch(p, self.yx_engine.session.base_data)
+                         for p in sc.get("patches") or []]
+                blocks.append(f"- {label}：" + ("；".join(descs) if descs else "沿用当前全部要求"))
+            preview = ("将按这些方案分别排（其余要求沿用当前已生效的）：\n"
+                       + "\n".join(blocks)
                        + "\n\n确认后并发求解，全部算完再对比。")
             payload = {"kind": "batch", "scenarios": scenarios,
                        "sourcePrompt": translate_text,
@@ -1823,11 +1835,20 @@ class AgentToolbox:
                 {"message": text, "markdown": text, "verbatim": True, "requiresUserConfirmation": False},
             ))
         summary = self.yx_engine.session.summary()
+        # 「这次改了什么」和「现在一共按什么在排」天然重叠：本轮刚记下的那条会在
+        # 两张表里各出现一次，看着像多改了一条。按补丁身份把本轮已回显的从总表
+        # 里去掉，总表只留此前就在的，标题上补总条数，信息不丢也不重复。
+        from yxcore import slots as S  # noqa: PLC0415
+        session = self.yx_engine.session
+        touched = {json.dumps(p.to_json(), sort_keys=True, ensure_ascii=False)
+                   for p in list(turn.新增 or []) + [new for _, new in turn.修订 or []]}
+        rest = [S.describe_patch(p, session.base_data) for p in session.patches()
+                if json.dumps(p.to_json(), sort_keys=True, ensure_ascii=False) not in touched]
         lines = [f"- {line}" for line in echo]
-        if summary:
+        if rest:
             lines.append("")
-            lines.append("现在按这些在排：")
-            lines.extend(f"- {line}" for line in summary)
+            lines.append(f"现在按这些在排（共 {len(session.patches())} 条，本轮已在上列）：")
+            lines.extend(f"- {line}" for line in rest)
         hint = _conflict_hint(summary)
         if hint:
             lines.append("")

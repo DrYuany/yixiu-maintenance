@@ -157,6 +157,8 @@ export interface PendingModelChange {
     after: unknown;
   }>;
   dsl?: Record<string, unknown>;
+  /** kind=batch 时才有：这一轮要并发算的 N 个方案。 */
+  scenarios?: Array<{ 标签?: string; patches?: Array<Record<string, unknown>> }>;
   preview: string;
   sourcePrompt: string;
 }

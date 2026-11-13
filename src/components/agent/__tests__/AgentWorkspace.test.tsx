@@ -175,6 +175,35 @@ describe("ConversationCanvas submission guard", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认生成沙盘" }));
     expect(send).toHaveBeenCalledWith("确认生成沙盘");
   });
+
+  it("lists the scenarios on a batch confirmation card", () => {
+    // 多方案确认卡以前只有 operations 可读，批量形态落到「0 项」，
+    // 用户点确认时并不知道自己在算哪几版。
+    const send = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ConversationCanvas
+        messages={[]}
+        versions={[]}
+        sending={false}
+        pendingChange={{
+          baseVersionId: null,
+          kind: "batch",
+          scenarios: [{ 标签: "经济优先" }, { 标签: "分层优先" }],
+          preview: "将按这些方案分别排",
+          sourcePrompt: "经济优先和分层各排一版",
+        }}
+        onSend={send}
+        onOpenVersion={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("待确认多方案求解")).toBeInTheDocument();
+    expect(screen.getByText("2 个方案")).toBeInTheDocument();
+    expect(screen.getByText("经济优先")).toBeInTheDocument();
+    expect(screen.getByText("分层优先")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认生成沙盘" }));
+    expect(send).toHaveBeenCalledWith("确认生成沙盘");
+  });
 });
 
 describe("SolveWaitDialog", () => {

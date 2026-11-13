@@ -185,6 +185,23 @@ def test_grounding_unlabeled_numbers_still_fail() -> None:
     assert "没标注" in r.failures[0]["reason"]
 
 
+def test_grounding_accepts_day_hour_conversion() -> None:
+    """工具给 336 小时、回答写 14 天，是换单位不是编数字，不该标未溯源。"""
+    from app.core.answer_grounding import grounding_report
+
+    report = grounding_report("展望期按 14 天算，共 336 小时。", ["展望期：336 小时"])
+    assert report["未溯源"] == [], report
+    assert report["有未溯源"] is False
+
+    # 反向：工具给天、回答换成小时也一样成立
+    reverse = grounding_report("展望期 336 小时。", ["展望期：14 天"])
+    assert reverse["未溯源"] == [], reverse
+
+    # 换算只在天/小时之间生效，不能把任意小数都放过
+    unrelated = grounding_report("船租 14 万元。", ["租船：12000 元"])
+    assert unrelated["未溯源"] == ["14 万元"], unrelated
+
+
 def test_exit_hint_accepts_real_next_step_but_rejects_none() -> None:
     """通用退路表只收带动作/承接的短语，真没给退路的回答不许混过去。"""
     started = "真实 CP-SAT 求解已启动，正在后台跑。算完会自动出方案卡。"

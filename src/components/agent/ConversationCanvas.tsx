@@ -451,17 +451,24 @@ export function ConversationCanvas({
         {pendingChange ? (
           (() => {
             const isDsl = pendingChange.kind === "dsl" || Array.isArray(pendingChange.dsl?.constraints);
+            const isBatch = pendingChange.kind === "batch";
             const dslItems = isDsl ? dslChangeItems(pendingChange.dsl) : [];
             const operationItems = (pendingChange.operations ?? []).map((operation) => ({
               label: operation.key,
               value: String(operation.after ?? "移除"),
             }));
-            const items = isDsl ? dslItems : operationItems;
+            // 多方案确认卡也要读得懂：别的形态靠 operations/dsl 列条目，批量只有
+            // 方案标签。不列出来就是「0 项」，用户点确认时并不知道要算哪几版。
+            const batchItems = (pendingChange.scenarios ?? []).map((scenario, index) => ({
+              label: `方案${index + 1}`,
+              value: String(scenario.标签 || `方案${index + 1}`),
+            }));
+            const items = isBatch ? batchItems : (isDsl ? dslItems : operationItems);
             return (
               <div className="pending-change-card" aria-live="polite">
                 <div className="pending-change-head">
-                  <span><Sparkles size={14} />待确认模型变更</span>
-                  <strong>{isDsl ? `${items.length} 条` : `${items.length} 项`}</strong>
+                  <span><Sparkles size={14} />{isBatch ? "待确认多方案求解" : "待确认模型变更"}</span>
+                  <strong>{isBatch ? `${items.length} 个方案` : (isDsl ? `${items.length} 条` : `${items.length} 项`)}</strong>
                 </div>
                 <div className="pending-change-list">
                   {items.slice(0, 4).map((item, index) => (

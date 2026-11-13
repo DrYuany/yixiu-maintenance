@@ -13,8 +13,10 @@ import pytest
 from app.core.agent_tools import AgentToolbox, serialize_clarify_groups
 
 
-def _patch(pid):
-    return SimpleNamespace(to_json=lambda: {"id": pid}, pid=pid)
+def _patch(pid, value="经济优先"):
+    # 描述一条补丁要用到 slot/value（describe_patch 的入参），fake 也得有。
+    return SimpleNamespace(to_json=lambda: {"id": pid}, pid=pid,
+                           slot="strategy", index=None, value=value)
 
 
 def _turn(**kwargs):
@@ -26,7 +28,8 @@ def _turn(**kwargs):
 
 def _engine(turn):
     session = SimpleNamespace(say=lambda text, timeout=90, resolved_intent=None: turn,
-                              summary=lambda: ["- 现在：最少完成 5 项"])
+                              summary=lambda: ["- 现在：最少完成 5 项"],
+                              patches=lambda: [], base_data=None)
     return SimpleNamespace(session=session)
 
 
@@ -116,7 +119,7 @@ def test_solve_translates_user_message_not_instruction():
         return _turn(场景=[{"标签": "经济优先", "patches": [_patch("p1")]}])
 
     engine = SimpleNamespace(session=SimpleNamespace(
-        say=say, summary=lambda: []))
+        say=say, summary=lambda: [], patches=lambda: [], base_data=None))
     toolbox, persisted = _toolbox(engine)
     result = toolbox._solve_inner(
         {"instruction": "改成经济优先", "scenarios": ["经济优先", "严重性优先"]})
@@ -131,10 +134,10 @@ def test_solve_falls_back_to_instruction_without_user_message():
 
     def say(text, timeout=90, resolved_intent=None):
         captured["text"] = text
-        return _turn(新增=[{"字段": "x"}], echo=lambda: ["- echo"])
+        return _turn(新增=[_patch("p1")], echo=lambda: ["- echo"])
 
     engine = SimpleNamespace(session=SimpleNamespace(
-        say=say, summary=lambda: []))
+        say=say, summary=lambda: [], patches=lambda: [], base_data=None))
     toolbox = AgentToolbox(
         conversation_id="c1",
         versions=SimpleNamespace(list_by_conversation=lambda cid: []),
@@ -154,7 +157,8 @@ def test_solve_passes_original_words_and_resolved_intent_separately():
         seen.update(text=text, resolved_intent=resolved_intent)
         return _turn()
 
-    engine = SimpleNamespace(session=SimpleNamespace(say=say, summary=lambda: []))
+    engine = SimpleNamespace(session=SimpleNamespace(
+        say=say, summary=lambda: [], patches=lambda: [], base_data=None))
     toolbox, _ = _toolbox(engine)
     toolbox.user_message = "可以"
     toolbox._solve_inner({"instruction": "把船租单价上调两成，按现状排一版"})
@@ -170,7 +174,8 @@ def test_solve_skips_resolved_intent_when_it_equals_original_words():
         seen.update(text=text, resolved_intent=resolved_intent)
         return _turn()
 
-    engine = SimpleNamespace(session=SimpleNamespace(say=say, summary=lambda: []))
+    engine = SimpleNamespace(session=SimpleNamespace(
+        say=say, summary=lambda: [], patches=lambda: [], base_data=None))
     toolbox, _ = _toolbox(engine)
     toolbox.user_message = "船租涨两成"
     toolbox._solve_inner({"instruction": "船租涨两成"})

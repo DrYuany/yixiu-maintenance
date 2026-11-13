@@ -76,11 +76,22 @@ def _close(left: float, right: float) -> bool:
     return abs(left - right) <= max(abs(left), abs(right)) * _TOLERANCE
 
 
-def _has_source(value: float, pool: set[float]) -> bool:
+def _has_source(value: float, pool: set[float], unit: str = "") -> bool:
+    """这个数在工具结果里有没有出处（含单位换算）。
+
+    天与小时要能互转：工具常给「展望期 336 小时」，人话写「14 天展望期」，
+    只做元/万元、%↔小数这三档会把它判成没出处，天天误报一条。换算只在
+    对应单位上生效，不让「24」这种数顺带把任意小数字都放过去。
+    """
     if not pool:
         return False
+    scales = _SCALES
+    if unit in {"天", "日"}:
+        scales = _SCALES + (1 / 24,)     # 工具给小时（336），答案换成天（14）
+    elif unit == "小时":
+        scales = _SCALES + (24.0,)       # 工具给天（14），答案换成小时（336）
     for known in pool:
-        for scale in _SCALES:
+        for scale in scales:
             if _close(value, known * scale):
                 return True
     return False
@@ -106,7 +117,8 @@ def grounding_report(
         if not found:  # pragma: no cover - 带单位的前面一定有数字
             continue
         value = float(found.group(0))
-        if not _has_source(value, pool) and token not in seen:
+        unit = token[found.end():].strip()
+        if not _has_source(value, pool, unit) and token not in seen:
             seen.add(token)
             ungrounded.append(token)
 
