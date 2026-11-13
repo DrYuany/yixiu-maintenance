@@ -26,9 +26,65 @@ TOOL_LABELS = {
     "read_catalog": "读取目标目录",
     "read_alarms": "读取告警清单",
     "read_site": "读取现场数据",
+    "read_jobs": "查看求解进展",
     "solve": "准备排程变更",
     "submit_change": "提交排程变更",
+    "ledger": "查看检修单台账",
 }
+
+# 过程面板里解释「这个工具是干什么的」。只写给用户可以核对的一句话，
+# 不写内部实现；工具名另由 tool 字段单独传，前端排在标签旁边。
+TOOL_PURPOSE = {
+    "read_versions": "看已经排过的方案里有哪些事实和数字",
+    "read_environment": "查风况、电价与海事窗口",
+    "read_catalog": "查目标、权重和约束的目录",
+    "read_alarms": "查台账里还没结案的告警",
+    "read_site": "查现场风机、部件、库存与窗口",
+    "read_jobs": "看求解任务跑到哪一步",
+    "solve": "把这句话翻译成排程改动，先出预览",
+    "submit_change": "确认变更并启动真实求解",
+    "ledger": "查检修单台账与送审状态",
+}
+
+STATUS_LABELS = {
+    "ok": "已读到数据",
+    "needs_confirmation": "已生成待确认的变更预览",
+    "clarify": "这一步需要你澄清",
+    "not_available": "数据没取到",
+    "error": "这一步失败了",
+}
+
+
+def _tool_result_brief(result: Any, toolbox: AgentToolbox) -> str:
+    """把工具返回压成一句人能核实的摘要，不编内容、不猜字段含义。"""
+    status = result.get("status") if isinstance(result, dict) else None
+    bits = [STATUS_LABELS.get(str(status), f"状态 {status or '未知'}")]
+    data = result.get("data") if isinstance(result, dict) else None
+    count: int | None = None
+    if isinstance(data, dict):
+        # 只认语义明确的数量字段。以前随便挑 data 里第一个 list 数长度，
+        # 会把「窗口列表 3 项」显示成「读到 3 条」，让人以为现场只有 3 条。
+        counts = data.get("counts")
+        if isinstance(counts, dict) and isinstance(counts.get("total"), (int, float)):
+            count = int(counts["total"])
+        else:
+            for key in ("总数", "任务数", "告警数", "方案数", "条数", "count", "total"):
+                value = data.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    count = int(value)
+                    break
+    elif isinstance(data, list):
+        # 整个返回就是一份清单，长度才是可信的。
+        count = len(data)
+    if count is not None:
+        bits.append(f"共 {count} 条")
+    try:
+        trace = toolbox.trace()
+        if trace:
+            bits.append(f"{round(float(trace[-1].get('latencyMs', 0)))} ms")
+    except Exception:  # noqa: BLE001 - 耗时只是装饰，缺了不影响过程展示
+        pass
+    return " · ".join(bits)
 
 # 「哪些字不许改写」和「本轮只交哪一份」由工具自己在返回里声明：
 # data["verbatim"]=True  → 这段 markdown 由系统原样附在回答末尾；
@@ -75,6 +131,7 @@ class ConversationAgent:
         snapshot: ConversationMemory | None = None,
         on_token: Callable[[str], None] | None = None,
         on_status: Callable[[str], None] | None = None,
+        on_stage: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         if not self.enabled:
             raise ConversationAgentError("MINIMAX_API_KEY is not configured")
@@ -101,6 +158,26 @@ class ConversationAgent:
         # 用户自己报的数（「船租压到 8 万」）不算模型编的，所以原话也算出处。
         sources: list[str] = [message]
 
+        def _stage(*, stage_id: str, label: str, status: str,
+                   detail: str | None = None, tool: str | None = None) -> None:
+            """一条结构化过程事件。同一个 id 的 running→done 会被前端就地替换。
+
+            过程面板要回答三件事：现在到哪个环节、调用了哪个工具、那一步
+            拿回了什么。所以事件必须跟着真实循环发，不能事后按文案补。
+            """
+            if not on_stage:
+                return
+            payload: dict[str, Any] = {
+                "stage_id": stage_id,
+                "label": label,
+                "status": status,
+            }
+            if detail:
+                payload["detail"] = detail
+            if tool:
+                payload["tool"] = tool
+            on_stage(payload)
+
         def _grounded(text: str) -> str:
             """答案里的数字追不到工具结果时，当场标出来——不替模型背书。"""
             from app.core.answer_grounding import caveat_line, grounding_report
@@ -124,8 +201,17 @@ class ConversationAgent:
                 text = f"{text}\n\n{block}" if text else block
             return text
 
-        for _ in range(self.max_rounds):
+        for round_index in range(self.max_rounds):
             # 思考型模型不支持 tool_choice=any，统一用 auto，让模型自己决定是否调工具。
+            think_id = f"think.{round_index}"
+            think_label = (
+                "理解这句话，决定下一步" if round_index == 0
+                else "结合读到的事实继续推理"
+            )
+            _stage(
+                stage_id=think_id, label=think_label, status="running",
+                detail="模型在判断要不要查数据、查哪份数据",
+            )
             try:
                 with client.messages.stream(
                     model=self.model,
@@ -143,16 +229,39 @@ class ConversationAgent:
                                 on_token(text)
                     final = stream.get_final_message()
             except Exception as exc:  # pragma: no cover - network boundary
+                _stage(
+                    stage_id=think_id, label=think_label, status="error",
+                    detail="这一轮没拿到模型回复",
+                )
                 raise ConversationAgentError(str(exc)) from exc
 
             tool_calls = [
                 block for block in final.content if getattr(block, "type", "") == "tool_use"
             ]
             if not tool_calls:
+                _stage(
+                    stage_id=think_id, label=think_label, status="done",
+                    detail="不再调工具，直接给回答",
+                )
+                _stage(
+                    stage_id="answer", label="把结果整理成回答", status="running",
+                    detail="把工具读到的数字和模型的说明合成一段回答",
+                )
                 text = _finish()
                 if not text:
                     raise ConversationAgentError("模型没有返回文本")
-                return _grounded(text)
+                answer = _grounded(text)
+                _stage(
+                    stage_id="answer", label="把结果整理成回答", status="done",
+                    detail="回答已整理好",
+                )
+                return answer
+
+            _stage(
+                stage_id=think_id, label=think_label, status="done",
+                detail="决定调用 "
+                + "、".join(TOOL_LABELS.get(b.name, b.name) for b in tool_calls),
+            )
 
             assistant_blocks = [
                 block
@@ -161,11 +270,22 @@ class ConversationAgent:
             ]
             messages.append({"role": "assistant", "content": assistant_blocks})
             results = []
-            for block in tool_calls:
-                label = TOOL_LABELS.get(block.name, block.name)
+            for call_index, block in enumerate(tool_calls):
+                name = block.name
+                label = TOOL_LABELS.get(name, name)
+                tool_id = f"tool.{round_index}.{call_index}"
+                _stage(
+                    stage_id=tool_id, label=f"调用工具 · {label}", status="running",
+                    tool=name,
+                    detail=TOOL_PURPOSE.get(name, "读取或变更这一步需要的数据"),
+                )
                 if on_status:
                     on_status(f"{label}…")
-                result = toolbox.execute(block.name, dict(block.input or {}))
+                result = toolbox.execute(name, dict(block.input or {}))
+                _stage(
+                    stage_id=tool_id, label=f"调用工具 · {label}", status="done",
+                    tool=name, detail=_tool_result_brief(result, toolbox),
+                )
                 data = result.get("data")
                 verbatim = (
                     isinstance(data, dict)
@@ -201,7 +321,17 @@ class ConversationAgent:
                     on_token("\n\n")
             messages.append({"role": "user", "content": results})
 
-        return _grounded(_finish())
+        # 四轮用完仍未交卷：也要把「整理回答」这一步标完，别把过程停在半路。
+        _stage(
+            stage_id="answer", label="把结果整理成回答", status="running",
+            detail="把工具读到的数字和模型的说明合成一段回答",
+        )
+        answer = _grounded(_finish())
+        _stage(
+            stage_id="answer", label="把结果整理成回答", status="done",
+            detail="回答已整理好",
+        )
+        return answer
 
     def summarize(self, messages: list[Message]) -> str | None:
         """用 LLM 把旧消息压缩成自由文本摘要；未启用/失败返回 None，绝不抛。"""

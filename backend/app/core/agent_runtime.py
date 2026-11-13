@@ -78,11 +78,19 @@ class StreamSink:
         label: str,
         status: str = "running",
         detail: str | None = None,
+        *,
+        tool: str | None = None,
     ) -> None:
-        """结构化步骤事件（过程可视化 + 评测阶段 span 同源）。"""
+        """结构化步骤事件（过程可视化 + 评测阶段 span 同源）。
+
+        tool 是这一步实际调用的工具名，前端单独排成标签；没调工具的步骤
+        （理解、整理回答）不带这个字段。
+        """
         data: dict[str, Any] = {"id": stage_id, "label": label, "status": status}
         if detail is not None:
             data["detail"] = detail
+        if tool is not None:
+            data["tool"] = tool
         self.emit({"event": "stage", "data": data})
 
     def replace(self, text: str) -> None:
@@ -290,7 +298,9 @@ class AgentRuntime:
                 }
                 label = labels.get(name, f"已执行 {name}")
                 sink.status(label)
-                sink.stage(f"tool.{name}", label, "done")
+                # 结构化过程事件由 conversation_agent 的工具循环统一发
+                # （含 running 与结果摘要），这里不再补一条同名 done，
+                # 否则前端会按 id 收成两条互相打架的步骤。
 
         # 待确认变更的唯一事实源是持久化的 working memory；工具箱拿它的
         # 本轮快照，跨轮「确认」才读得到上一轮那份预览。
@@ -333,6 +343,8 @@ class AgentRuntime:
             snapshot=snapshot,
             on_token=sink.token if sink else None,
             on_status=sink.status if sink else None,
+            # 过程事件由工具循环按真实进展发：理解 → 调工具 → 整理回答。
+            on_stage=(lambda payload: sink.stage(**payload)) if sink else None,
         )
 
     def _yx_route(self, conversation_id: str, content: str, selected_version_id: str | None, sink):

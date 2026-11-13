@@ -177,6 +177,8 @@ export interface StageEvent {
   label: string;
   status: "running" | "done" | "error";
   detail?: string | null;
+  /** 这一步实际调用的工具名；理解、整理回答这类步骤不带 */
+  tool?: string | null;
 }
 
 export interface WorkingMemory {

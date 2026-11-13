@@ -3326,3 +3326,118 @@ button { cursor: pointer; }
   .quota-banner { align-items: flex-start; flex-direction: column; gap: 8px; }
   .agent-context-bar { flex-wrap: wrap; }
 }
+
+/* ── 工具调用过程时间线 ─────────────────────────────────────────────────
+   独立类名，绝不复用了 .process-steps：旧原型页把它定义成 6 列步骤条
+   （窄屏 3 列），会把纵向时间线挤成「一个字一行」。旧样式留给原型页，
+   agent 过程面板从这一组类名开始。                                      */
+
+.agent-process { margin-top: 11px; border-top: 1px dashed #dbe6f3; padding-top: 10px; }
+.agent-process-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.agent-process-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #3c587d;
+  font-size: 12px;
+  font-weight: 600;
+}
+.agent-process-current.is-active { color: #155fc5; }
+.agent-process-current .spin-dot { width: 9px; height: 9px; }
+.agent-process-check {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #e5f6ed;
+  color: #1c8a55;
+  font-size: 10px;
+}
+.agent-process-count { color: #93a0b1; font-size: 11px; }
+.agent-process-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: #4a6f9e;
+  font-size: 11px;
+  cursor: pointer;
+}
+.agent-process-toggle svg { transition: transform .2s ease; }
+.agent-process-toggle svg.rotated { transform: rotate(180deg); }
+
+.agent-process-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-process-list::before {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 11px;
+  width: 1px;
+  background: #dce7f5;
+  content: "";
+}
+.agent-process-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+  padding: 6px 0 9px;
+}
+.agent-process-index {
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #d5e2f1;
+  border-radius: 50%;
+  background: #fff;
+  color: #6f8097;
+  font-size: 11px;
+  font-weight: 700;
+}
+.agent-process-item.is-running .agent-process-index { border-color: #9ec4ee; background: #eaf3ff; }
+.agent-process-item.is-done .agent-process-index { border-color: #cbe7d7; background: #f1fbf5; color: #1c8a55; }
+.agent-process-item.is-error .agent-process-index { border-color: #f3cbc5; background: #fdf2f1; color: #b42318; }
+.agent-process-body { min-width: 0; padding-top: 1px; }
+.agent-process-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.agent-process-step { color: #9aa6b5; font-size: 10px; letter-spacing: .02em; }
+.agent-process-title strong { color: #2f3f57; font-size: 12px; font-weight: 600; }
+.agent-process-item.is-running .agent-process-title strong { color: #155fc5; }
+.agent-process-tool {
+  padding: 1px 6px;
+  border: 1px solid #d9e4f2;
+  border-radius: 5px;
+  background: #f5f9ff;
+  color: #3b6ea8;
+  font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.agent-process-state { margin-left: auto; color: #8a97a8; font-size: 10px; white-space: nowrap; }
+.agent-process-item.is-running .agent-process-state { color: #155fc5; }
+.agent-process-item.is-error .agent-process-state { color: #b42318; }
+.agent-process-detail {
+  margin: 3px 0 0;
+  color: #7b8798;
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .agent-process-title strong { font-size: 13px; }
+  .agent-process-detail { font-size: 11px; }
+  .agent-process-head { gap: 7px; }
+  .agent-process-count { font-size: 10px; }
+}

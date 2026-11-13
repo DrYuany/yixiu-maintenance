@@ -169,6 +169,9 @@ export function ConversationCanvas({
   const threadEnd = useRef<HTMLDivElement>(null);
   const solving = activeJob?.status === "QUEUED" || activeJob?.status === "RUNNING";
   const backgrounded = Boolean(activeJob?.backgrounded);
+  // 过程面板先回答「现在到哪了」，再展开逐步看「调了哪个工具、拿回什么」。
+  const runningStage = stages.find((stage) => stage.status === "running");
+  const doneCount = stages.filter((stage) => stage.status === "done").length;
   const chronologicalVersions = useMemo(
     () => sortVersionsChronologically(versions),
     [versions],
@@ -354,31 +357,51 @@ export function ConversationCanvas({
               <div className="thinking-line">
                 <span /><span /><span />
                 {sending
-                  ? streamStatus || "正在读取事实并组织回答"
+                  ? streamStatus || "已收到你的要求，正在交给理解层…"
                   : (activeJob?.statusMessage || `真实求解进行中 · 已运行 ${activeJob?.elapsedSeconds ?? 0} 秒`)}
               </div>
             ) : null}
             {stages.length > 0 ? (
-              <div className="process-panel">
-                <button
-                  type="button"
-                  className="process-toggle"
-                  onClick={() => setShowProcess((previous) => !previous)}
-                >
-                  <ChevronDown size={12} className={showProcess ? "rotated" : ""} />
-                  {showProcess ? "收起过程" : `展开过程（${stages.length} 步）`}
-                </button>
+              <div className="agent-process">
+                <div className="agent-process-head">
+                  <span className={`agent-process-current${runningStage ? " is-active" : ""}`}>
+                    {runningStage
+                      ? <i className="spin-dot" />
+                      : <span className="agent-process-check" aria-hidden="true">✓</span>}
+                    当前环节：{runningStage?.label ?? "已整理出回答"}
+                  </span>
+                  <span className="agent-process-count">{doneCount}/{stages.length} 步完成</span>
+                  <button
+                    type="button"
+                    className="agent-process-toggle"
+                    onClick={() => setShowProcess((previous) => !previous)}
+                  >
+                    <ChevronDown size={12} className={showProcess ? "rotated" : ""} />
+                    {showProcess ? "收起" : "展开"}
+                  </button>
+                </div>
                 {showProcess ? (
-                  <ol className="process-steps">
-                    {stages.map((stage) => (
-                      <li key={stage.id} className={`process-step is-${stage.status}`}>
-                        <span className="process-icon" aria-hidden="true">
+                  <ol className="agent-process-list">
+                    {stages.map((stage, index) => (
+                      <li key={stage.id} className={`agent-process-item is-${stage.status}`}>
+                        <span className="agent-process-index" aria-hidden="true">
                           {stage.status === "running"
                             ? <i className="spin-dot" />
-                            : stage.status === "done" ? "✓" : "✗"}
+                            : stage.status === "done" ? "✓" : "!"}
                         </span>
-                        <span className="process-label">{stage.label}</span>
-                        {stage.detail ? <small className="process-detail">{stage.detail}</small> : null}
+                        <div className="agent-process-body">
+                          <div className="agent-process-title">
+                            <span className="agent-process-step">第 {index + 1} 步</span>
+                            <strong>{stage.label}</strong>
+                            {stage.tool ? <code className="agent-process-tool">{stage.tool}</code> : null}
+                            <span className="agent-process-state">
+                              {stage.status === "running"
+                                ? "进行中"
+                                : stage.status === "done" ? "已完成" : "失败"}
+                            </span>
+                          </div>
+                          {stage.detail ? <p className="agent-process-detail">{stage.detail}</p> : null}
+                        </div>
                       </li>
                     ))}
                   </ol>
