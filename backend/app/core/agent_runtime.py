@@ -542,6 +542,11 @@ class AgentRuntime:
         # 把当前生效的补丁一起带进每个场景（先铺底、再叠本场景），否则批量
         # 一确认就把「船租、最多修几个」这类前几轮的要求全丢了。
         base_patches = [p.to_json() for p in self._yx_engine(conversation_id).session.patches()]
+        # 重新取一份最新记忆再写：调用方刚把 pendingChange 清掉，而
+        # apply_patch 不修改传入对象，拿旧的 activeFilters 往上写会把
+        # 刚清掉的待确认原样复活——算完再点一次「确认」就又能触发一轮，
+        # 正是那种「一直在循环」的观感。
+        memory = self.memories.get_or_create(conversation_id)
         filters = dict(memory.activeFilters)
         filters["pendingBatch"] = {"total": len(scenarios), "completed": [], "labels": labels}
         self.memories.apply_patch(memory, {"activeFilters": filters})

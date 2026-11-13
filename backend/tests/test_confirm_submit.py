@@ -19,23 +19,33 @@ BASE_PATCH = {"slot": "strategy", "value": "高风险优先抢修"}
 
 
 def _runtime(filters=None):
-    """最小 runtime：只需要记忆、待确认状态和提交后的响应槽。"""
-    memory = SimpleNamespace(activeFilters=dict(filters or {}), activeView="P01")
+    """最小 runtime：只需要记忆、待确认状态和提交后的响应槽。
 
-    def apply_patch(_memory, patch):
-        if "activeFilters" in patch:
-            memory.activeFilters = dict(patch["activeFilters"])
+    记忆存储照真实语义来：apply_patch 返回**新对象**、不改传入的那个。
+    以前这里图省事直接改对象，把「清完待确认又被写回去」这类问题盖住了。
+    """
+    store = {"memory": SimpleNamespace(activeFilters=dict(filters or {}), activeView="P01")}
+
+    def get_or_create(_cid):
+        return store["memory"]
+
+    def apply_patch(memory, patch):
+        # 用 key 判断而不是 or：清空后的 {} 也是合法的新值，不能被当成「没传」
+        next_filters = (dict(patch["activeFilters"]) if "activeFilters" in patch
+                        else dict(memory.activeFilters))
+        store["memory"] = SimpleNamespace(activeFilters=next_filters, activeView="P01")
+        return store["memory"]
 
     rt = AgentRuntime.__new__(AgentRuntime)
-    rt.memories = SimpleNamespace(get_or_create=lambda _cid: memory, apply_patch=apply_patch)
+    rt.memories = SimpleNamespace(get_or_create=get_or_create, apply_patch=apply_patch)
     rt._tls = SimpleNamespace(submitted_response=None)
-    return rt, memory
+    return rt, store
 
 
 def test_batch_pending_change_is_submittable():
     """批量预览同样是「等用户点头」的形态，确认必须放行。"""
     pending = {"kind": "batch", "scenarios": [{"标签": "经济优先", "patches": []}]}
-    rt, memory = _runtime({"pendingChange": pending})
+    rt, store = _runtime({"pendingChange": pending})
     started = []
 
     def fake_start(conversation_id, pending_change, mem, sink):
@@ -49,7 +59,7 @@ def test_batch_pending_change_is_submittable():
     assert out["ok"] is True, out
     assert started and started[0]["kind"] == "batch", "批量场景没被交给求解分派"
     assert "失效" not in out["message"]
-    assert "pendingChange" not in memory.activeFilters, "提交后待确认状态要清掉"
+    assert "pendingChange" not in store["memory"].activeFilters, "提交后待确认状态要清掉"
 
 
 def test_yx_pending_change_still_submittable():
@@ -72,13 +82,13 @@ def test_yx_pending_change_still_submittable():
 def test_clarify_pending_change_is_refused_with_its_own_words():
     """澄清中的变更不是「失效」，是「还没答完」——两句话不能混着说。"""
     pending = {"kind": "clarify", "groups": [], "chosen": [], "nextIndex": 0}
-    rt, memory = _runtime({"pendingChange": pending})
+    rt, store = _runtime({"pendingChange": pending})
     out = rt._submit_pending_change("c1", pending, "算吧")
 
     assert out["ok"] is False
     assert "还没定下来" in out["message"]
     assert "失效" not in out["message"], "说失效会让用户重说一遍需求"
-    assert memory.activeFilters.get("pendingChange") is pending, "拒绝时不该清掉待选项"
+    assert store["memory"].activeFilters.get("pendingChange") is pending, "拒绝时不该清掉待选项"
 
 
 def test_unknown_kind_is_refused():
@@ -177,6 +187,30 @@ def test_batch_job_failure_is_marked_not_left_running(monkeypatch):
 
     assert failed and "boom" in failed[0][1]
     assert advanced == ["job1"], "失败的场景也要推进批量，否则永远算不完"
+
+
+def test_batch_solve_does_not_resurrect_cleared_pending():
+    """清掉待确认之后写 pendingBatch，不能拿旧记忆把 pendingChange 带回来。
+
+    线上实测的残余循环：两个方案都算完了，再点一次「确认」又能触发一轮，
+    因为提交时把「已清掉的待确认」连同旧快照一起写回了记忆。
+    """
+    stale = {"kind": "batch", "scenarios": [{"标签": "经济优先", "patches": []}]}
+    rt, store = _runtime({})  # 存储里已经是清的，旧的 stale 只在调用方手里
+    rt.jobs = None
+    rt.job_pool = None
+    rt._yx_engine = lambda _cid: SimpleNamespace(session=SimpleNamespace(patches=lambda: []))
+    rt._run_batch_scenario_sync = lambda *args, **kwargs: None
+    rt._emit_batch_compare = lambda *args: None
+    rt._finalize_response = lambda *args, **kwargs: SimpleNamespace()
+
+    rt._start_batch_solve("c1", {"scenarios": [{"标签": "经济优先", "patches": []}]},
+                          SimpleNamespace(activeFilters=dict(pendingChange=stale), activeView="P01"),
+                          None)
+
+    filters = store["memory"].activeFilters
+    assert "pendingChange" not in filters, "已清掉的待确认被旧快照写回复活了"
+    assert filters.get("pendingBatch", {}).get("total") == 1
 
 
 def test_toolbox_submit_change_actually_starts_solve_for_batch():
